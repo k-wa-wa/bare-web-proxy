@@ -15,10 +15,12 @@ RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -o proxy-app main.go
 # -----------------
 # 2. 実行ステージ
 # -----------------
-FROM alpine:3.19
+FROM scratch
 
-WORKDIR /app
-COPY --from=builder /app/proxy-app .
+# CA証明書をコピーしてHTTPS通信に対応
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+
+COPY --from=builder /app/proxy-app /proxy-app
 
 EXPOSE 3000
-CMD ["./proxy-app"]
+CMD ["/proxy-app"]
