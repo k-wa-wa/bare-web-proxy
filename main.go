@@ -8,9 +8,11 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
 )
 
@@ -396,9 +398,21 @@ func main() {
 		ctx, timeCancel := context.WithTimeout(ctx, 30*time.Second)
 		defer timeCancel()
 
+		// ネットワーク転送サイズを集計するイベントリスナーの登録
+		var totalNetworkBytes int64
+		var mu sync.Mutex
+		chromedp.ListenTarget(ctx, func(ev interface{}) {
+			if e, ok := ev.(*network.EventLoadingFinished); ok {
+				mu.Lock()
+				totalNetworkBytes += int64(e.EncodedDataLength)
+				mu.Unlock()
+			}
+		})
+
 		var rawHTML string
 		// 2. Chrome側でページをレンダリングしてHTMLを取得
 		err := chromedp.Run(ctx,
+			network.Enable(), // ネットワーク制御を有効化
 			chromedp.Navigate(targetURL),
 			// ネットワークが安定するか、Body要素が出るまで待つ
 			chromedp.WaitVisible(`body`, chromedp.ByQuery),
@@ -411,7 +425,10 @@ func main() {
 			return
 		}
 
-		originalSize := len(rawHTML)
+		originalSize := int(totalNetworkBytes)
+		if originalSize == 0 {
+			originalSize = len(rawHTML)
+		}
 
 		// 3. HTMLの削ぎ落とし＆URL書き換え処理
 		doc, err := goquery.NewDocumentFromReader(strings.NewReader(rawHTML))
