@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bare-web-proxy
+  labels:
+    app: bare-web-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bare-web-proxy
+  template:
+    metadata:
+      labels:
+        app: bare-web-proxy
+    spec:
+      containers:
+      # --- コンテナ1: Chromeブラウザ本体 ---
+      - name: headless-chrome
+        image: chromedp/headless-shell:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 9222
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+
+
+      # --- コンテナ2: あなたのGoプログラム ---
+      - name: proxy-app
+        image: bare-web-proxy:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 3000
+        env:
+        - name: PORT
+          value: "3000"
+        - name: CHROME_URL
+          value: "ws://127.0.0.1:9222" # 隣のコンテナへローカルホスト経由で接続
+        resources:
+          requests:
+            memory: "32Mi"  # Goアプリ自体は非常に軽量
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "200m"

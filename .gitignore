@@ -1,0 +1,11 @@
+# Binaries
+bare-web-proxy
+proxy-app
+main
+
+# Go vendor
+vendor/
+
+# Logs
+*.log
+port-forward.log
