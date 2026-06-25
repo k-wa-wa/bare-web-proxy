@@ -16,6 +16,86 @@ import (
 
 var proxyBaseURL string
 
+const readerCSS = `<style>
+	body {
+		max-width: 800px;
+		margin: 0 auto;
+		padding: 24px;
+		font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+		line-height: 1.75;
+		font-size: 16px;
+		color: #1a1a1a;
+		background-color: #fbfbfb;
+	}
+	h1, h2, h3, h4, h5, h6 {
+		color: #111;
+		margin-top: 1.8em;
+		margin-bottom: 0.6em;
+		font-weight: 700;
+		line-height: 1.3;
+	}
+	h1 { font-size: 2.2rem; border-bottom: 1px solid #eaecef; padding-bottom: 0.3em; }
+	h2 { font-size: 1.65rem; border-bottom: 1px solid #eaecef; padding-bottom: 0.3em; }
+	h3 { font-size: 1.35rem; }
+	a {
+		color: #2563eb;
+		text-decoration: none;
+	}
+	a:hover {
+		text-decoration: underline;
+	}
+	p {
+		margin-bottom: 1.25em;
+	}
+	ul, ol {
+		margin-bottom: 1.25em;
+		padding-left: 2em;
+	}
+	li {
+		margin-bottom: 0.5em;
+	}
+	pre, code {
+		font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+		background-color: #f3f4f6;
+		border-radius: 6px;
+	}
+	code {
+		padding: 0.2em 0.4em;
+		font-size: 85%;
+	}
+	pre {
+		padding: 16px;
+		overflow: auto;
+		font-size: 85%;
+		line-height: 1.45;
+		margin-bottom: 1.25em;
+	}
+	pre code {
+		padding: 0;
+		background-color: transparent;
+		font-size: 100%;
+	}
+	blockquote {
+		margin: 0 0 1.25em;
+		padding: 0 1em;
+		color: #4b5563;
+		border-left: 0.25em solid #e5e7eb;
+	}
+	table {
+		border-collapse: collapse;
+		width: 100%;
+		margin-bottom: 1.25em;
+	}
+	th, td {
+		border: 1px solid #e5e7eb;
+		padding: 8px 12px;
+		text-align: left;
+	}
+	th {
+		background-color: #f9fafb;
+	}
+</style>`
+
 const frontendHTML = `<!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -344,6 +424,9 @@ func main() {
 		doc.Find("script, noscript, iframe, img, video, style, link[rel='stylesheet']").Each(func(i int, s *goquery.Selection) {
 			s.Remove()
 		})
+
+		// リーダーモード用CSSの注入
+		doc.Find("head").AppendHtml(readerCSS)
 
 		// aタグのリンク書き換え
 		doc.Find("a").Each(func(i int, s *goquery.Selection) {
