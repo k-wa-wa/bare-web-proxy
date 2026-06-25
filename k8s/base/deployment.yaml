@@ -32,7 +32,7 @@ spec:
 
       # --- コンテナ2: あなたのGoプログラム ---
       - name: proxy-app
-        image: bare-web-proxy:latest
+        image: ghcr.io/k-wa-wa/bare-web-proxy:latest
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 3000

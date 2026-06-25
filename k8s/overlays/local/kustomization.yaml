@@ -3,6 +3,6 @@ kind: Kustomization
 resources:
 - ../../base
 images:
-- name: bare-web-proxy
+- name: ghcr.io/k-wa-wa/bare-web-proxy
   newName: bare-web-proxy
   newTag: local
