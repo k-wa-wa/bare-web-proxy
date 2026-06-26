@@ -330,13 +330,21 @@ func renderPage(ctx context.Context, targetURL string, userAgent string) (string
 		actions[i] = chromedp.ActionFunc(func(ctx context.Context) error {
 			var err error
 			cssTexts[idx], err = css.GetStyleSheetText(targetID).Do(ctx)
-			return err
+			if err != nil {
+				// スタイルシートが既に存在しない場合やアクセスできない場合でも、
+				// 他のスタイルシートの取得を継続するために、エラーを記録してnilを返します。
+				slog.Debug("Failed to get individual stylesheet text", slog.String("stylesheet_id", string(targetID)), slog.Any("error", err))
+				return nil
+			}
+			return nil
 		})
 	}
 
 	if len(actions) > 0 {
+		// すべてのアクションは個別でエラーをキャッチしてnilを返すため、
+		// chromedp.Run は全体のエラーで中断することなく実行されます。
 		if err := chromedp.Run(ctx, actions...); err != nil {
-			slog.Warn("Failed to get stylesheet texts", slog.Any("error", err))
+			slog.Warn("Failed to execute stylesheet retrieval actions", slog.Any("error", err))
 		}
 	}
 
