@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/network"
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 )
 
@@ -334,22 +336,39 @@ const frontendHTML = `<!DOCTYPE html>
 
             if (!urlVal) return;
 
-            // スキーム補完
-            if (!/^https?:\/\//i.test(urlVal)) {
-                urlVal = 'http://' + urlVal;
-            }
+            let targetURL = urlVal;
 
-            try {
-                new URL(urlVal);
-            } catch (e) {
-                errorArea.textContent = '有効なURLを入力してください（例: https://example.com）';
-                errorArea.classList.add('show');
-                return;
+            // URLかどうかの簡易判定
+            if (/^https?:\/\//i.test(urlVal)) {
+                // スキームがすでに明示されている場合
+                try {
+                    new URL(urlVal);
+                } catch (e) {
+                    errorArea.textContent = '有効なURLを入力してください（例: https://example.com）';
+                    errorArea.classList.add('show');
+                    return;
+                }
+            } else {
+                // スキームがない場合、ドメイン/ホスト名らしいか判定
+                // スペースを含まず、かつ「ドットを含む」か「localhost」である場合はURLとみなす
+                const isDomain = !/\s/.test(urlVal) && (urlVal.includes('.') || urlVal.startsWith('localhost'));
+                if (isDomain) {
+                    targetURL = 'http://' + urlVal;
+                    try {
+                        new URL(targetURL);
+                    } catch (e) {
+                        // URLとして無効な場合はDuckDuckGo検索クエリとする
+                        targetURL = 'https://html.duckduckgo.com/html/?q=' + encodeURIComponent(urlVal);
+                    }
+                } else {
+                    // それ以外はDuckDuckGo検索クエリとする
+                    targetURL = 'https://html.duckduckgo.com/html/?q=' + encodeURIComponent(urlVal);
+                }
             }
 
             errorArea.classList.remove('show');
             // プロキシURLへリダイレクト
-            window.location.href = '/proxy?url=' + encodeURIComponent(urlVal);
+            window.location.href = '/proxy?url=' + encodeURIComponent(targetURL);
         }
     </script>
 </body>
@@ -366,7 +385,7 @@ func main() {
 	if port == "" {
 		port = "3000"
 	}
-	proxyBaseURL = fmt.Sprintf("http://localhost:%s/proxy", port)
+	proxyBaseURL = "/proxy"
 
 	// 外部のHeadless Chrome (サイドカー) に接続する設定
 	allocatorContext, cancel := chromedp.NewRemoteAllocator(context.Background(), chromeURL)
@@ -394,6 +413,12 @@ func main() {
 		ctx, ctxCancel := chromedp.NewContext(allocatorContext)
 		defer ctxCancel()
 
+		// クライアントのUser-Agentを取得
+		userAgent := r.UserAgent()
+		if userAgent == "" {
+			userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+		}
+
 		// タイムアウト設定 (30秒)
 		ctx, timeCancel := context.WithTimeout(ctx, 30*time.Second)
 		defer timeCancel()
@@ -410,9 +435,34 @@ func main() {
 		})
 
 		var rawHTML string
+
 		// 2. Chrome側でページをレンダリングしてHTMLを取得
 		err := chromedp.Run(ctx,
 			network.Enable(), // ネットワーク制御を有効化
+			// クライアントのUser-Agentと、Accept-Language/Platformを設定してブラウザらしく見せる
+			emulation.SetUserAgentOverride(userAgent).
+				WithAcceptLanguage("ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7").
+				WithPlatform("Windows"),
+			// navigator.webdriver を隠蔽してボット検知を回避 (さらにchrome/pluginsオブジェクトもモック)
+			chromedp.ActionFunc(func(ctx context.Context) error {
+				_, err := page.AddScriptToEvaluateOnNewDocument(`
+					Object.defineProperty(navigator, 'webdriver', {
+						get: () => undefined
+					});
+					window.chrome = {
+						runtime: {},
+						loadTimes: function() {},
+						csi: function() {},
+						app: {}
+					};
+					Object.defineProperty(navigator, 'plugins', {
+						get: () => [
+							{ description: "Portable Document Format", filename: "internal-pdf-viewer", name: "Chrome PDF Viewer" }
+						]
+					});
+				`).Do(ctx)
+				return err
+			}),
 			chromedp.Navigate(targetURL),
 			// ネットワークが安定するか、Body要素が出るまで待つ
 			chromedp.WaitVisible(`body`, chromedp.ByQuery),
@@ -452,13 +502,29 @@ func main() {
 				return
 			}
 
-			// 相対パスを絶対URLに変換
-			base, _ := url.Parse(targetURL)
-			u, err := url.Parse(href)
-			if err != nil {
-				return
+			var absoluteURL string
+			if strings.HasPrefix(href, "http://") || strings.HasPrefix(href, "https://") {
+				absoluteURL = href
+			} else if strings.HasPrefix(href, "//") {
+				base, err := url.Parse(targetURL)
+				scheme := "https"
+				if err == nil && base.Scheme != "" {
+					scheme = base.Scheme
+				}
+				absoluteURL = scheme + ":" + href
+			} else {
+				// 相対パスを絶対URLに変換
+				base, err := url.Parse(targetURL)
+				if err != nil {
+					return
+				}
+				u, err := url.Parse(href)
+				if err != nil {
+					return
+				}
+				absoluteURL = base.ResolveReference(u).String()
 			}
-			absoluteURL := base.ResolveReference(u).String()
+			absoluteURL = resolveRedirectURL(absoluteURL)
 
 			// 中継サーバー経由に書き換え
 			newHref := fmt.Sprintf("%s?url=%s", proxyBaseURL, url.QueryEscape(absoluteURL))
@@ -523,4 +589,30 @@ func main() {
 	if err := http.ListenAndServe(":"+port, nil); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// resolveRedirectURL extracts the final target URL from search engine redirect links (e.g. DuckDuckGo or Google).
+func resolveRedirectURL(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+
+	// DuckDuckGo redirect format: https://duckduckgo.com/l/?uddg=...
+	if (u.Host == "duckduckgo.com" || u.Host == "html.duckduckgo.com") && (u.Path == "/l/" || u.Path == "/l") {
+		uddg := u.Query().Get("uddg")
+		if uddg != "" {
+			return uddg
+		}
+	}
+
+	// Google redirect format: https://www.google.com/url?q=...
+	if strings.Contains(u.Host, "google.") && u.Path == "/url" {
+		q := u.Query().Get("q")
+		if q != "" {
+			return q
+		}
+	}
+
+	return rawURL
 }
