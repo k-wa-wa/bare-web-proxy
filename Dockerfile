@@ -8,6 +8,7 @@ COPY go.mod go.sum ./
 COPY vendor/ ./vendor/
 
 COPY main.go ./
+COPY frontend/ ./frontend/
 
 # スタティックリンクでC言語依存を無くし、ローカルvendorを利用して軽量化
 RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -o proxy-app main.go

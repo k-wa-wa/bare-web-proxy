@@ -19,6 +19,11 @@ spec:
       - name: headless-chrome
         image: chromedp/headless-shell:latest
         imagePullPolicy: IfNotPresent
+        args:
+        - --blink-settings=imagesEnabled=false
+        - --disable-gpu
+        - --disable-software-rasterizer
+        - --disable-extensions
         ports:
         - containerPort: 9222
         resources:
