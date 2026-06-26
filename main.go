@@ -7,11 +7,14 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/css"
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/page"
@@ -19,86 +22,6 @@ import (
 )
 
 var proxyBaseURL string
-
-const readerCSS = `<style>
-	body {
-		max-width: 800px;
-		margin: 0 auto;
-		padding: 24px;
-		font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-		line-height: 1.75;
-		font-size: 16px;
-		color: #1a1a1a;
-		background-color: #fbfbfb;
-	}
-	h1, h2, h3, h4, h5, h6 {
-		color: #111;
-		margin-top: 1.8em;
-		margin-bottom: 0.6em;
-		font-weight: 700;
-		line-height: 1.3;
-	}
-	h1 { font-size: 2.2rem; border-bottom: 1px solid #eaecef; padding-bottom: 0.3em; }
-	h2 { font-size: 1.65rem; border-bottom: 1px solid #eaecef; padding-bottom: 0.3em; }
-	h3 { font-size: 1.35rem; }
-	a {
-		color: #2563eb;
-		text-decoration: none;
-	}
-	a:hover {
-		text-decoration: underline;
-	}
-	p {
-		margin-bottom: 1.25em;
-	}
-	ul, ol {
-		margin-bottom: 1.25em;
-		padding-left: 2em;
-	}
-	li {
-		margin-bottom: 0.5em;
-	}
-	pre, code {
-		font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
-		background-color: #f3f4f6;
-		border-radius: 6px;
-	}
-	code {
-		padding: 0.2em 0.4em;
-		font-size: 85%;
-	}
-	pre {
-		padding: 16px;
-		overflow: auto;
-		font-size: 85%;
-		line-height: 1.45;
-		margin-bottom: 1.25em;
-	}
-	pre code {
-		padding: 0;
-		background-color: transparent;
-		font-size: 100%;
-	}
-	blockquote {
-		margin: 0 0 1.25em;
-		padding: 0 1em;
-		color: #4b5563;
-		border-left: 0.25em solid #e5e7eb;
-	}
-	table {
-		border-collapse: collapse;
-		width: 100%;
-		margin-bottom: 1.25em;
-	}
-	th, td {
-		border: 1px solid #e5e7eb;
-		padding: 8px 12px;
-		text-align: left;
-	}
-	th {
-		background-color: #f9fafb;
-	}
-</style>`
 
 const frontendHTML = `<!DOCTYPE html>
 <html lang="ja">
@@ -423,13 +346,19 @@ func main() {
 		ctx, timeCancel := context.WithTimeout(ctx, 30*time.Second)
 		defer timeCancel()
 
-		// ネットワーク転送サイズを集計するイベントリスナーの登録
+		// ネットワーク転送サイズとスタイルシート情報を集計するイベントリスナーの登録
 		var totalNetworkBytes int64
+		var stylesheetIDs []cdp.StyleSheetID
 		var mu sync.Mutex
 		chromedp.ListenTarget(ctx, func(ev interface{}) {
 			if e, ok := ev.(*network.EventLoadingFinished); ok {
 				mu.Lock()
 				totalNetworkBytes += int64(e.EncodedDataLength)
+				mu.Unlock()
+			}
+			if e, ok := ev.(*css.EventStyleSheetAdded); ok {
+				mu.Lock()
+				stylesheetIDs = append(stylesheetIDs, e.Header.StyleSheetID)
 				mu.Unlock()
 			}
 		})
@@ -439,6 +368,7 @@ func main() {
 		// 2. Chrome側でページをレンダリングしてHTMLを取得
 		err := chromedp.Run(ctx,
 			network.Enable(), // ネットワーク制御を有効化
+			css.Enable(),     // CSSドメインを有効化
 			// クライアントのUser-Agentと、Accept-Language/Platformを設定してブラウザらしく見せる
 			emulation.SetUserAgentOverride(userAgent).
 				WithAcceptLanguage("ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7").
@@ -475,6 +405,30 @@ func main() {
 			return
 		}
 
+		// CSSテキストの取得 (1回の chromedp.Run で一括取得して最適化)
+		mu.Lock()
+		ids := make([]cdp.StyleSheetID, len(stylesheetIDs))
+		copy(ids, stylesheetIDs)
+		mu.Unlock()
+
+		cssTexts := make([]string, len(ids))
+		actions := make([]chromedp.Action, len(ids))
+		for i, id := range ids {
+			idx := i
+			targetID := id
+			actions[i] = chromedp.ActionFunc(func(ctx context.Context) error {
+				var err error
+				cssTexts[idx], err = css.GetStyleSheetText(targetID).Do(ctx)
+				return err
+			})
+		}
+
+		if len(actions) > 0 {
+			if err := chromedp.Run(ctx, actions...); err != nil {
+				log.Printf("Failed to get stylesheet texts: %v", err)
+			}
+		}
+
 		originalSize := int(totalNetworkBytes)
 		if originalSize == 0 {
 			originalSize = len(rawHTML)
@@ -492,8 +446,16 @@ func main() {
 			s.Remove()
 		})
 
-		// リーダーモード用CSSの注入
-		doc.Find("head").AppendHtml(readerCSS)
+		// 取得したCSSを<style>タグとして埋め込む
+		styleCloseRegex := regexp.MustCompile(`(?i)</style>`)
+		for _, cssText := range cssTexts {
+			if cssText == "" {
+				continue
+			}
+			// XSS対策: CSS内の </style> をエスケープ
+			safeCSS := styleCloseRegex.ReplaceAllString(cssText, `/* style closed */`)
+			doc.Find("head").AppendHtml("<style>\n" + safeCSS + "\n</style>")
+		}
 
 		// aタグのリンク書き換え
 		doc.Find("a").Each(func(i int, s *goquery.Selection) {
