@@ -9,7 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -146,7 +146,7 @@ func (h *Handler) HandleProxy(w http.ResponseWriter, r *http.Request) {
 	// 2. Chrome側でページをレンダリングしてHTMLとCSSを取得
 	rawHTML, cssTexts, totalNetworkBytes, err := renderPage(ctx, targetURL, userAgent)
 	if err != nil {
-		log.Printf("Chrome Error [%s]: %v", targetURL, err)
+		slog.Error("Chrome error", slog.String("url", targetURL), slog.Any("error", err))
 		http.Error(w, fmt.Sprintf("Render Error: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -154,7 +154,7 @@ func (h *Handler) HandleProxy(w http.ResponseWriter, r *http.Request) {
 	// 3. HTMLの削ぎ落とし＆URL書き換え＆ツールバー埋め込み処理
 	processedHTML, err := h.processHTML(rawHTML, targetURL, cssTexts)
 	if err != nil {
-		log.Printf("Process HTML Error [%s]: %v", targetURL, err)
+		slog.Error("Process HTML error", slog.String("url", targetURL), slog.Any("error", err))
 		http.Error(w, "HTML Parse/Generation Error", http.StatusInternalServerError)
 		return
 	}
@@ -162,7 +162,7 @@ func (h *Handler) HandleProxy(w http.ResponseWriter, r *http.Request) {
 	// 4. クライアントへの返却 (Gzip圧縮判定と圧縮処理)
 	finalSize, isGzip, err := compressAndWrite(w, r, processedHTML)
 	if err != nil {
-		log.Printf("Compression/Write Error [%s]: %v", targetURL, err)
+		slog.Error("Compression/Write error", slog.String("url", targetURL), slog.Any("error", err))
 		http.Error(w, "Response Generation Error", http.StatusInternalServerError)
 		return
 	}
@@ -336,7 +336,7 @@ func renderPage(ctx context.Context, targetURL string, userAgent string) (string
 
 	if len(actions) > 0 {
 		if err := chromedp.Run(ctx, actions...); err != nil {
-			log.Printf("Failed to get stylesheet texts: %v", err)
+			slog.Warn("Failed to get stylesheet texts", slog.Any("error", err))
 		}
 	}
 
@@ -421,21 +421,22 @@ func (h *Handler) processHTML(rawHTML string, targetURL string, cssTexts []strin
 // logCompression handles asynchronous compression ratio logging.
 func logCompression(urlStr string, origSize, compSize int, isGzip bool, startTime time.Time) {
 	savedBytes := origSize - compSize
-	reductionRate := 0.0
-	if origSize > 0 {
-		reductionRate = (float64(savedBytes) / float64(origSize)) * 100
+	cacheHit := origSize <= compSize
+
+	attrs := []slog.Attr{
+		slog.String("url", urlStr),
+		slog.Float64("original_kb", float64(origSize)/1024.0),
+		slog.Float64("compressed_kb", float64(compSize)/1024.0),
+		slog.Float64("saved_kb", float64(savedBytes)/1024.0),
+		slog.Bool("gzip", isGzip),
+		slog.Float64("duration_ms", float64(time.Since(startTime).Milliseconds())),
+		slog.Bool("cache_hit", cacheHit),
 	}
-	gzipStr := ""
-	if isGzip {
-		gzipStr = " (GZIP)"
+
+	if !cacheHit && origSize > 0 {
+		reductionRate := (float64(savedBytes) / float64(origSize)) * 100
+		attrs = append(attrs, slog.Float64("reduction_rate_percent", reductionRate))
 	}
-	log.Printf("[SUCCESS]%s URL: %s | Original: %.2f KB | Compressed: %.2f KB | Saved: %.2f KB (削減率: %.1f%%) | Time: %v",
-		gzipStr,
-		urlStr,
-		float64(origSize)/1024.0,
-		float64(compSize)/1024.0,
-		float64(savedBytes)/1024.0,
-		reductionRate,
-		time.Since(startTime),
-	)
+
+	slog.LogAttrs(context.Background(), slog.LevelInfo, "compression_success", attrs...)
 }

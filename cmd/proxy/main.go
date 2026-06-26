@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 
@@ -11,6 +11,10 @@ import (
 )
 
 func main() {
+	// デフォルトロガーとしてJSONハンドラーを設定
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	slog.SetDefault(logger)
+
 	chromeURL := os.Getenv("CHROME_URL")
 	if chromeURL == "" {
 		chromeURL = "ws://127.0.0.1:9222"
@@ -30,8 +34,9 @@ func main() {
 	http.HandleFunc("/proxy", h.HandleProxy)
 	http.HandleFunc("/proxy/assets/", h.HandleAssets)
 
-	log.Printf("Go Proxy Server starting on port %s...", port)
+	slog.Info("Go Proxy Server starting", slog.String("port", port))
 	if err := http.ListenAndServe(":"+port, nil); err != nil {
-		log.Fatal(err)
+		slog.Error("Server failed to start", slog.Any("error", err))
+		os.Exit(1)
 	}
 }
