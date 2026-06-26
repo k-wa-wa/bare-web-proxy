@@ -28,6 +28,7 @@ func main() {
 
 	http.HandleFunc("/", h.HandleRoot)
 	http.HandleFunc("/proxy", h.HandleProxy)
+	http.HandleFunc("/proxy/assets/", h.HandleAssets)
 
 	log.Printf("Go Proxy Server starting on port %s...", port)
 	if err := http.ListenAndServe(":"+port, nil); err != nil {

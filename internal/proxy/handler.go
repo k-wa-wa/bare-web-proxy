@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -44,13 +46,58 @@ var readerCSS string
 // Handler handles HTTP requests for root and proxy endpoints
 type Handler struct {
 	allocatorContext context.Context
+	toolbarHash      string
+	readerHash       string
 }
 
 // NewHandler creates a new Handler with the given remote allocator context
 func NewHandler(allocatorContext context.Context) *Handler {
 	return &Handler{
 		allocatorContext: allocatorContext,
+		toolbarHash:      getHash(toolbarJS),
+		readerHash:       getHash(readerCSS),
 	}
+}
+
+func getHash(content string) string {
+	hash := sha256.Sum256([]byte(content))
+	return hex.EncodeToString(hash[:])[:8]
+}
+
+// HandleAssets serves static assets like toolbar.js and reader.css with aggressive caching
+func (h *Handler) HandleAssets(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Path
+	var content string
+	var contentType string
+	var contentHash string
+
+	if strings.HasSuffix(path, "toolbar.js") {
+		content = toolbarJS
+		contentType = "application/javascript; charset=utf-8"
+		contentHash = h.toolbarHash
+	} else if strings.HasSuffix(path, "reader.css") {
+		content = readerCSS
+		contentType = "text/css; charset=utf-8"
+		contentHash = h.readerHash
+	} else {
+		http.NotFound(w, r)
+		return
+	}
+
+	w.Header().Set("ETag", `"`+contentHash+`"`)
+
+	// If-None-Match による検証（304 返却）
+	if r.Header.Get("If-None-Match") == `"`+contentHash+`"` {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+
+	// キャッシュの再検証（If-None-Match）を毎回強制する
+	w.Header().Set("Cache-Control", "no-cache")
+
+	w.Header().Set("Content-Type", contentType)
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(content))
 }
 
 // HandleRoot serves the main proxy UI page
@@ -105,7 +152,7 @@ func (h *Handler) HandleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 3. HTMLの削ぎ落とし＆URL書き換え＆ツールバー埋め込み処理
-	processedHTML, err := processHTML(rawHTML, targetURL, cssTexts)
+	processedHTML, err := h.processHTML(rawHTML, targetURL, cssTexts)
 	if err != nil {
 		log.Printf("Process HTML Error [%s]: %v", targetURL, err)
 		http.Error(w, "HTML Parse/Generation Error", http.StatusInternalServerError)
@@ -296,8 +343,8 @@ func renderPage(ctx context.Context, targetURL string, userAgent string) (string
 	return rawHTML, cssTexts, totalNetworkBytes, nil
 }
 
-// processHTML processes raw HTML (stripping tags, injection reader mode CSS and the custom toolbar, rewriting a-tag links).
-func processHTML(rawHTML string, targetURL string, cssTexts []string) (string, error) {
+// processHTML processes raw HTML (stripping tags, injecting references to reader mode CSS and the custom toolbar, rewriting a-tag links).
+func (h *Handler) processHTML(rawHTML string, targetURL string, cssTexts []string) (string, error) {
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(rawHTML))
 	if err != nil {
 		return "", err
@@ -318,8 +365,8 @@ func processHTML(rawHTML string, targetURL string, cssTexts []string) (string, e
 		doc.Find("head").AppendHtml("<style data-proxy-style=\"original\">\n" + safeCSS + "\n</style>")
 	}
 
-	// リーダーモード用CSSの埋め込み
-	doc.Find("head").AppendHtml("<style id=\"proxy-reader-style\">\n" + readerCSS + "\n</style>")
+	// リーダーモード用CSSの読み込み (外部ファイル参照)
+	doc.Find("head").AppendHtml("<link rel=\"stylesheet\" id=\"proxy-reader-style\" href=\"/proxy/assets/reader.css\">")
 
 	// aタグのリンク書き換え
 	doc.Find("a").Each(func(i int, s *goquery.Selection) {
@@ -356,14 +403,14 @@ func processHTML(rawHTML string, targetURL string, cssTexts []string) (string, e
 		s.SetAttr("href", newHref)
 	})
 
-	// ツールバーの埋め込み
+	// ツールバーの埋め込み (外部ファイル参照)
 	doc.Find("body").PrependHtml("<div id=\"proxy-toolbar-container\"></div>")
 	jsTargetURL, err := json.Marshal(targetURL)
 	if err != nil {
 		jsTargetURL = []byte(`""`)
 	}
 	doc.Find("body").AppendHtml(fmt.Sprintf("<script>window.__PROXY_TARGET_URL__ = %s;</script>", string(jsTargetURL)))
-	doc.Find("body").AppendHtml("<script>\n" + toolbarJS + "\n</script>")
+	doc.Find("body").AppendHtml("<script src=\"/proxy/assets/toolbar.js\"></script>")
 
 	// ドメイン固有の修正を適用
 	modifiers.ModifyDocument(doc, targetURL)
