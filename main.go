@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -30,6 +31,12 @@ var (
 
 //go:embed frontend/index.html
 var frontendHTML string
+
+//go:embed frontend/toolbar.js
+var toolbarJS string
+
+//go:embed frontend/reader.css
+var readerCSS string
 func main() {
 	// 環境変数から設定を取得
 	chromeURL := os.Getenv("CHROME_URL") // 例: ws://127.0.0.1:9222
@@ -194,8 +201,11 @@ func main() {
 			}
 			// XSS対策: CSS内の </style> をエスケープ
 			safeCSS := styleCloseRegex.ReplaceAllString(cssText, `/* style closed */`)
-			doc.Find("head").AppendHtml("<style>\n" + safeCSS + "\n</style>")
+			doc.Find("head").AppendHtml("<style data-proxy-style=\"original\">\n" + safeCSS + "\n</style>")
 		}
+
+		// リーダーモード用CSSの埋め込み
+		doc.Find("head").AppendHtml("<style id=\"proxy-reader-style\">\n" + readerCSS + "\n</style>")
 
 		// aタグのリンク書き換え
 		doc.Find("a").Each(func(i int, s *goquery.Selection) {
@@ -231,6 +241,15 @@ func main() {
 			newHref := fmt.Sprintf("%s?url=%s", proxyBaseURL, url.QueryEscape(absoluteURL))
 			s.SetAttr("href", newHref)
 		})
+
+		// ツールバーの埋め込み
+		doc.Find("body").PrependHtml("<div id=\"proxy-toolbar-container\"></div>")
+		jsTargetURL, err := json.Marshal(targetURL)
+		if err != nil {
+			jsTargetURL = []byte(`""`)
+		}
+		doc.Find("body").AppendHtml(fmt.Sprintf("<script>window.__PROXY_TARGET_URL__ = %s;</script>", string(jsTargetURL)))
+		doc.Find("body").AppendHtml("<script>\n" + toolbarJS + "\n</script>")
 
 		// 最終的なHTML文字列の生成
 		processedHTML, err := doc.Html()

@@ -1,0 +1,39 @@
+body.proxy-reader-mode {
+	background-color: #fcfbfa !important;
+	color: #1a1a1a !important;
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+	line-height: 1.8 !important;
+	max-width: 760px !important;
+	margin: 0 auto !important;
+	padding: 80px 24px 40px 24px !important;
+	word-wrap: break-word !important;
+	text-rendering: optimizeLegibility !important;
+}
+body.proxy-reader-mode a {
+	color: #1a5fb4 !important;
+	text-decoration: underline !important;
+}
+body.proxy-reader-mode h1, body.proxy-reader-mode h2, body.proxy-reader-mode h3, 
+body.proxy-reader-mode h4, body.proxy-reader-mode h5, body.proxy-reader-mode h6 {
+	color: #111111 !important;
+	margin-top: 1.6em !important;
+	margin-bottom: 0.6em !important;
+	line-height: 1.3 !important;
+	font-weight: 700 !important;
+}
+body.proxy-reader-mode p {
+	margin-bottom: 1.5em !important;
+}
+body.proxy-reader-mode blockquote {
+	border-left: 4px solid #dcdad5 !important;
+	padding-left: 16px !important;
+	color: #5f5e5a !important;
+	margin: 1.5em 0 !important;
+	font-style: italic !important;
+}
+body.proxy-reader-mode pre, body.proxy-reader-mode code {
+	background-color: #f4f3ef !important;
+	font-family: monospace !important;
+	padding: 2px 6px !important;
+	border-radius: 4px !important;
+}
