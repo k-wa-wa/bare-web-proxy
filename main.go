@@ -488,7 +488,7 @@ func main() {
 		}
 
 		// 不要なタグの排除
-		doc.Find("script, noscript, iframe, img, video, style, link[rel='stylesheet']").Each(func(i int, s *goquery.Selection) {
+		doc.Find("script, noscript, iframe, img, svg, video, style, link[rel='stylesheet']").Each(func(i int, s *goquery.Selection) {
 			s.Remove()
 		})
 
