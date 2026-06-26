@@ -99,170 +99,20 @@ func main() {
 		ctx, timeCancel := context.WithTimeout(ctx, 30*time.Second)
 		defer timeCancel()
 
-		// ネットワーク転送サイズとスタイルシート情報を集計するイベントリスナーの登録
-		var totalNetworkBytes int64
-		var stylesheetIDs []cdp.StyleSheetID
-		var mu sync.Mutex
-		chromedp.ListenTarget(ctx, func(ev interface{}) {
-			if e, ok := ev.(*network.EventLoadingFinished); ok {
-				mu.Lock()
-				totalNetworkBytes += int64(e.EncodedDataLength)
-				mu.Unlock()
-			}
-			if e, ok := ev.(*css.EventStyleSheetAdded); ok {
-				mu.Lock()
-				stylesheetIDs = append(stylesheetIDs, e.Header.StyleSheetID)
-				mu.Unlock()
-			}
-		})
-
-		var rawHTML string
-
-		// 2. Chrome側でページをレンダリングしてHTMLを取得
-		err := chromedp.Run(ctx,
-			network.Enable(), // ネットワーク制御を有効化
-			css.Enable(),     // CSSドメインを有効化
-			// クライアントのUser-Agentと、Accept-Language/Platformを設定してブラウザらしく見せる
-			emulation.SetUserAgentOverride(userAgent).
-				WithAcceptLanguage("ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7").
-				WithPlatform("Windows"),
-			// navigator.webdriver を隠蔽してボット検知を回避
-			chromedp.ActionFunc(func(ctx context.Context) error {
-				_, err := page.AddScriptToEvaluateOnNewDocument(`
-					Object.defineProperty(navigator, 'webdriver', {
-						get: () => undefined
-					});
-					window.chrome = {
-						runtime: {},
-						loadTimes: function() {},
-						csi: function() {},
-						app: {}
-					};
-					Object.defineProperty(navigator, 'plugins', {
-						get: () => [
-							{ description: "Portable Document Format", filename: "internal-pdf-viewer", name: "Chrome PDF Viewer" }
-						]
-					});
-				`).Do(ctx)
-				return err
-			}),
-			chromedp.Navigate(targetURL),
-			// ネットワークが安定するか、Body要素が出るまで待つ
-			chromedp.WaitVisible(`body`, chromedp.ByQuery),
-			chromedp.OuterHTML(`html`, &rawHTML),
-		)
-
+		// 2. Chrome側でページをレンダリングしてHTMLとCSSを取得
+		rawHTML, cssTexts, totalNetworkBytes, err := renderPage(ctx, targetURL, userAgent)
 		if err != nil {
 			log.Printf("Chrome Error [%s]: %v", targetURL, err)
 			http.Error(w, fmt.Sprintf("Render Error: %v", err), http.StatusInternalServerError)
 			return
 		}
 
-		// CSSテキストの取得
-		mu.Lock()
-		ids := make([]cdp.StyleSheetID, len(stylesheetIDs))
-		copy(ids, stylesheetIDs)
-		mu.Unlock()
-
-		cssTexts := make([]string, len(ids))
-		actions := make([]chromedp.Action, len(ids))
-		for i, id := range ids {
-			idx := i
-			targetID := id
-			actions[i] = chromedp.ActionFunc(func(ctx context.Context) error {
-				var err error
-				cssTexts[idx], err = css.GetStyleSheetText(targetID).Do(ctx)
-				return err
-			})
-		}
-
-		if len(actions) > 0 {
-			if err := chromedp.Run(ctx, actions...); err != nil {
-				log.Printf("Failed to get stylesheet texts: %v", err)
-			}
-		}
-
-		// 3. HTMLの削ぎ落とし＆URL書き換え処理
-		doc, err := goquery.NewDocumentFromReader(strings.NewReader(rawHTML))
+		// 3. HTMLの削ぎ落とし＆URL書き換え＆ツールバー埋め込み処理
+		processedHTML, err := processHTML(rawHTML, targetURL, cssTexts)
 		if err != nil {
-			http.Error(w, "HTML Parse Error", http.StatusInternalServerError)
+			log.Printf("Process HTML Error [%s]: %v", targetURL, err)
+			http.Error(w, "HTML Parse/Generation Error", http.StatusInternalServerError)
 			return
-		}
-
-		// 不要なタグの排除
-		doc.Find("script, noscript, iframe, img, svg, video, style, link[rel='stylesheet']").Each(func(i int, s *goquery.Selection) {
-			s.Remove()
-		})
-
-		// 取得したCSSを<style>タグとして埋め込む (事前コンパイルされた正規表現を使用)
-		for _, cssText := range cssTexts {
-			if cssText == "" {
-				continue
-			}
-			// XSS対策: CSS内の </style> をエスケープ
-			safeCSS := styleCloseRegex.ReplaceAllString(cssText, `/* style closed */`)
-			doc.Find("head").AppendHtml("<style data-proxy-style=\"original\">\n" + safeCSS + "\n</style>")
-		}
-
-		// リーダーモード用CSSの埋め込み
-		doc.Find("head").AppendHtml("<style id=\"proxy-reader-style\">\n" + readerCSS + "\n</style>")
-
-		// aタグのリンク書き換え
-		doc.Find("a").Each(func(i int, s *goquery.Selection) {
-			href, exists := s.Attr("href")
-			if !exists {
-				return
-			}
-
-			var absoluteURL string
-			if strings.HasPrefix(href, "http://") || strings.HasPrefix(href, "https://") {
-				absoluteURL = href
-			} else if strings.HasPrefix(href, "//") {
-				base, err := url.Parse(targetURL)
-				scheme := "https"
-				if err == nil && base.Scheme != "" {
-					scheme = base.Scheme
-				}
-				absoluteURL = scheme + ":" + href
-			} else {
-				// 相対パスを絶対URLに変換
-				base, err := url.Parse(targetURL)
-				if err != nil {
-					return
-				}
-				u, err := url.Parse(href)
-				if err != nil {
-					return
-				}
-				absoluteURL = base.ResolveReference(u).String()
-			}
-
-			// 中継サーバー経由に書き換え
-			newHref := fmt.Sprintf("%s?url=%s", proxyBaseURL, url.QueryEscape(absoluteURL))
-			s.SetAttr("href", newHref)
-		})
-
-		// ツールバーの埋め込み
-		doc.Find("body").PrependHtml("<div id=\"proxy-toolbar-container\"></div>")
-		jsTargetURL, err := json.Marshal(targetURL)
-		if err != nil {
-			jsTargetURL = []byte(`""`)
-		}
-		doc.Find("body").AppendHtml(fmt.Sprintf("<script>window.__PROXY_TARGET_URL__ = %s;</script>", string(jsTargetURL)))
-		doc.Find("body").AppendHtml("<script>\n" + toolbarJS + "\n</script>")
-
-		// 最終的なHTML文字列の生成
-		processedHTML, err := doc.Html()
-		if err != nil {
-			http.Error(w, "HTML Generation Error", http.StatusInternalServerError)
-			return
-		}
-
-		compressedSize := len(processedHTML)
-
-		originalSize := int(totalNetworkBytes)
-		if originalSize == 0 {
-			originalSize = len(rawHTML)
 		}
 
 		// 4. クライアントへの返却
@@ -271,27 +121,192 @@ func main() {
 		w.Write([]byte(processedHTML))
 
 		// 5. パフォーマンスログの出力 (goroutineで非同期実行してレスポンスに影響を与えない)
-		go func(urlStr string, origSize, compSize int, start time.Time) {
-			savedBytes := origSize - compSize
-			reductionRate := 0.0
-			if origSize > 0 {
-				reductionRate = (float64(savedBytes) / float64(origSize)) * 100
-			}
-			log.Printf("[SUCCESS] URL: %s | Original: %.2f KB | Compressed: %.2f KB | Saved: %.2f KB (削減率: %.1f%%) | Time: %v",
-				urlStr,
-				float64(origSize)/1024.0,
-				float64(compSize)/1024.0,
-				float64(savedBytes)/1024.0,
-				reductionRate,
-				time.Since(start),
-			)
-		}(targetURL, originalSize, compressedSize, startTime)
+		originalSize := int(totalNetworkBytes)
+		if originalSize == 0 {
+			originalSize = len(rawHTML)
+		}
+		go logCompression(targetURL, originalSize, len(processedHTML), startTime)
 	})
 
 	log.Printf("Go Proxy Server starting on port %s...", port)
 	if err := http.ListenAndServe(":"+port, nil); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// renderPage renders the page using chromedp and returns the raw HTML, CSS contents, and total network bytes transfered.
+func renderPage(ctx context.Context, targetURL string, userAgent string) (string, []string, int64, error) {
+	// ネットワーク転送サイズとスタイルシート情報を集計するイベントリスナーの登録
+	var totalNetworkBytes int64
+	var stylesheetIDs []cdp.StyleSheetID
+	var mu sync.Mutex
+	chromedp.ListenTarget(ctx, func(ev interface{}) {
+		if e, ok := ev.(*network.EventLoadingFinished); ok {
+			mu.Lock()
+			totalNetworkBytes += int64(e.EncodedDataLength)
+			mu.Unlock()
+		}
+		if e, ok := ev.(*css.EventStyleSheetAdded); ok {
+			mu.Lock()
+			stylesheetIDs = append(stylesheetIDs, e.Header.StyleSheetID)
+			mu.Unlock()
+		}
+	})
+
+	var rawHTML string
+
+	// Chrome側でページをレンダリングしてHTMLを取得
+	err := chromedp.Run(ctx,
+		network.Enable(), // ネットワーク制御を有効化
+		css.Enable(),     // CSSドメインを有効化
+		// クライアントのUser-Agentと、Accept-Language/Platformを設定してブラウザらしく見せる
+		emulation.SetUserAgentOverride(userAgent).
+			WithAcceptLanguage("ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7").
+			WithPlatform("Windows"),
+		// navigator.webdriver を隠蔽してボット検知を回避
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			_, err := page.AddScriptToEvaluateOnNewDocument(`
+				Object.defineProperty(navigator, 'webdriver', {
+					get: () => undefined
+				});
+				window.chrome = {
+					runtime: {},
+					loadTimes: function() {},
+					csi: function() {},
+					app: {}
+				};
+				Object.defineProperty(navigator, 'plugins', {
+					get: () => [
+						{ description: "Portable Document Format", filename: "internal-pdf-viewer", name: "Chrome PDF Viewer" }
+					]
+				});
+			`).Do(ctx)
+			return err
+		}),
+		chromedp.Navigate(targetURL),
+		// ネットワークが安定するか、Body要素が出るまで待つ
+		chromedp.WaitVisible(`body`, chromedp.ByQuery),
+		chromedp.OuterHTML(`html`, &rawHTML),
+	)
+
+	if err != nil {
+		return "", nil, 0, err
+	}
+
+	// CSSテキストの取得
+	mu.Lock()
+	ids := make([]cdp.StyleSheetID, len(stylesheetIDs))
+	copy(ids, stylesheetIDs)
+	mu.Unlock()
+
+	cssTexts := make([]string, len(ids))
+	actions := make([]chromedp.Action, len(ids))
+	for i, id := range ids {
+		idx := i
+		targetID := id
+		actions[i] = chromedp.ActionFunc(func(ctx context.Context) error {
+			var err error
+			cssTexts[idx], err = css.GetStyleSheetText(targetID).Do(ctx)
+			return err
+		})
+	}
+
+	if len(actions) > 0 {
+		if err := chromedp.Run(ctx, actions...); err != nil {
+			log.Printf("Failed to get stylesheet texts: %v", err)
+		}
+	}
+
+	return rawHTML, cssTexts, totalNetworkBytes, nil
+}
+
+// processHTML processes raw HTML (stripping tags, injection reader mode CSS and the custom toolbar, rewriting a-tag links).
+func processHTML(rawHTML string, targetURL string, cssTexts []string) (string, error) {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(rawHTML))
+	if err != nil {
+		return "", err
+	}
+
+	// 不要なタグの排除
+	doc.Find("script, noscript, iframe, img, svg, video, style, link[rel='stylesheet']").Each(func(i int, s *goquery.Selection) {
+		s.Remove()
+	})
+
+	// 取得したCSSを<style>タグとして埋め込む (事前コンパイルされた正規表現を使用)
+	for _, cssText := range cssTexts {
+		if cssText == "" {
+			continue
+		}
+		// XSS対策: CSS内の </style> をエスケープ
+		safeCSS := styleCloseRegex.ReplaceAllString(cssText, `/* style closed */`)
+		doc.Find("head").AppendHtml("<style data-proxy-style=\"original\">\n" + safeCSS + "\n</style>")
+	}
+
+	// リーダーモード用CSSの埋め込み
+	doc.Find("head").AppendHtml("<style id=\"proxy-reader-style\">\n" + readerCSS + "\n</style>")
+
+	// aタグのリンク書き換え
+	doc.Find("a").Each(func(i int, s *goquery.Selection) {
+		href, exists := s.Attr("href")
+		if !exists {
+			return
+		}
+
+		var absoluteURL string
+		if strings.HasPrefix(href, "http://") || strings.HasPrefix(href, "https://") {
+			absoluteURL = href
+		} else if strings.HasPrefix(href, "//") {
+			base, err := url.Parse(targetURL)
+			scheme := "https"
+			if err == nil && base.Scheme != "" {
+				scheme = base.Scheme
+			}
+			absoluteURL = scheme + ":" + href
+		} else {
+			// 相対パスを絶対URLに変換
+			base, err := url.Parse(targetURL)
+			if err != nil {
+				return
+			}
+			u, err := url.Parse(href)
+			if err != nil {
+				return
+			}
+			absoluteURL = base.ResolveReference(u).String()
+		}
+
+		// 中継サーバー経由に書き換え
+		newHref := fmt.Sprintf("%s?url=%s", proxyBaseURL, url.QueryEscape(absoluteURL))
+		s.SetAttr("href", newHref)
+	})
+
+	// ツールバーの埋め込み
+	doc.Find("body").PrependHtml("<div id=\"proxy-toolbar-container\"></div>")
+	jsTargetURL, err := json.Marshal(targetURL)
+	if err != nil {
+		jsTargetURL = []byte(`""`)
+	}
+	doc.Find("body").AppendHtml(fmt.Sprintf("<script>window.__PROXY_TARGET_URL__ = %s;</script>", string(jsTargetURL)))
+	doc.Find("body").AppendHtml("<script>\n" + toolbarJS + "\n</script>")
+
+	return doc.Html()
+}
+
+// logCompression handles asynchronous compression ratio logging.
+func logCompression(urlStr string, origSize, compSize int, startTime time.Time) {
+	savedBytes := origSize - compSize
+	reductionRate := 0.0
+	if origSize > 0 {
+		reductionRate = (float64(savedBytes) / float64(origSize)) * 100
+	}
+	log.Printf("[SUCCESS] URL: %s | Original: %.2f KB | Compressed: %.2f KB | Saved: %.2f KB (削減率: %.1f%%) | Time: %v",
+		urlStr,
+		float64(origSize)/1024.0,
+		float64(compSize)/1024.0,
+		float64(savedBytes)/1024.0,
+		reductionRate,
+		time.Since(startTime),
+	)
 }
 
 // resolveTargetURL converts queryVal to a valid proxy destination URL.
