@@ -7,11 +7,11 @@ WORKDIR /app
 COPY go.mod go.sum ./
 COPY vendor/ ./vendor/
 
-COPY main.go ./
-COPY frontend/ ./frontend/
+COPY cmd/ ./cmd/
+COPY internal/ ./internal/
 
 # スタティックリンクでC言語依存を無くし、ローカルvendorを利用して軽量化
-RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -o proxy-app main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -o proxy-app cmd/proxy/main.go
 
 # -----------------
 # 2. 実行ステージ

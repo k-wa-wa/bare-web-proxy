@@ -1,6 +1,8 @@
-package main
+package proxy
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	_ "embed"
 	"encoding/json"
@@ -8,7 +10,6 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -24,7 +25,7 @@ import (
 )
 
 var (
-	proxyBaseURL        string
+	proxyBaseURL        = "/proxy"
 	styleCloseRegex     = regexp.MustCompile(`(?i)</style>`)
 	concurrentSemaphore = make(chan struct{}, 5) // 最大同時リクエスト数を5に制限
 )
@@ -37,101 +38,138 @@ var toolbarJS string
 
 //go:embed frontend/reader.css
 var readerCSS string
-func main() {
-	// 環境変数から設定を取得
-	chromeURL := os.Getenv("CHROME_URL") // 例: ws://127.0.0.1:9222
-	if chromeURL == "" {
-		chromeURL = "ws://127.0.0.1:9222"
+
+// Handler handles HTTP requests for root and proxy endpoints
+type Handler struct {
+	allocatorContext context.Context
+}
+
+// NewHandler creates a new Handler with the given remote allocator context
+func NewHandler(allocatorContext context.Context) *Handler {
+	return &Handler{
+		allocatorContext: allocatorContext,
 	}
-	
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "3000"
+}
+
+// HandleRoot serves the main proxy UI page
+func (h *Handler) HandleRoot(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
 	}
-	proxyBaseURL = "/proxy"
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte(frontendHTML))
+}
 
-	// 外部のHeadless Chrome (サイドカー) に接続する設定
-	allocatorContext, cancel := chromedp.NewRemoteAllocator(context.Background(), chromeURL)
-	defer cancel()
-
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(frontendHTML))
-	})
-
-	http.HandleFunc("/proxy", func(w http.ResponseWriter, r *http.Request) {
-		targetURL := r.URL.Query().Get("url")
-		if targetURL == "" {
-			queryVal := r.URL.Query().Get("q")
-			if queryVal == "" {
-				http.Error(w, "Error: 'url' or 'q' parameter is required", http.StatusBadRequest)
-				return
-			}
-			targetURL = resolveTargetURL(queryVal)
-		}
-
-		// 同時接続数の制御 (最大同時5リクエストに制限してChromeハングを防止)
-		select {
-		case concurrentSemaphore <- struct{}{}:
-			defer func() { <-concurrentSemaphore }()
-		case <-r.Context().Done():
-			http.Error(w, "Server Busy: timeout waiting for slot", http.StatusServiceUnavailable)
-			return
-		}
-
-		startTime := time.Now()
-
-		// 1. Chrome用のコンテキスト作成
-		ctx, ctxCancel := chromedp.NewContext(allocatorContext)
-		defer ctxCancel()
-
-		// クライアントのUser-Agentを取得
-		userAgent := r.UserAgent()
-		if userAgent == "" {
-			userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-		}
-
-		// タイムアウト設定 (30秒)
-		ctx, timeCancel := context.WithTimeout(ctx, 30*time.Second)
-		defer timeCancel()
-
-		// 2. Chrome側でページをレンダリングしてHTMLとCSSを取得
-		rawHTML, cssTexts, totalNetworkBytes, err := renderPage(ctx, targetURL, userAgent)
-		if err != nil {
-			log.Printf("Chrome Error [%s]: %v", targetURL, err)
-			http.Error(w, fmt.Sprintf("Render Error: %v", err), http.StatusInternalServerError)
-			return
-		}
-
-		// 3. HTMLの削ぎ落とし＆URL書き換え＆ツールバー埋め込み処理
-		processedHTML, err := processHTML(rawHTML, targetURL, cssTexts)
-		if err != nil {
-			log.Printf("Process HTML Error [%s]: %v", targetURL, err)
-			http.Error(w, "HTML Parse/Generation Error", http.StatusInternalServerError)
-			return
-		}
-
-		// 4. クライアントへの返却
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(processedHTML))
-
-		// 5. パフォーマンスログの出力 (goroutineで非同期実行してレスポンスに影響を与えない)
-		originalSize := int(totalNetworkBytes)
-		if originalSize == 0 {
-			originalSize = len(rawHTML)
-		}
-		go logCompression(targetURL, originalSize, len(processedHTML), startTime)
-	})
-
-	log.Printf("Go Proxy Server starting on port %s...", port)
-	if err := http.ListenAndServe(":"+port, nil); err != nil {
-		log.Fatal(err)
+// HandleProxy handles proxy request, rendering pages using headless Chrome and rewriting HTML
+func (h *Handler) HandleProxy(w http.ResponseWriter, r *http.Request) {
+	targetURL, err := parseTargetURL(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
+
+	// 同時接続数の制御 (最大同時5リクエストに制限してChromeハングを防止)
+	select {
+	case concurrentSemaphore <- struct{}{}:
+		defer func() { <-concurrentSemaphore }()
+	case <-r.Context().Done():
+		http.Error(w, "Server Busy: timeout waiting for slot", http.StatusServiceUnavailable)
+		return
+	}
+
+	startTime := time.Now()
+
+	// 1. Chrome用のコンテキスト作成
+	ctx, ctxCancel := chromedp.NewContext(h.allocatorContext)
+	defer ctxCancel()
+
+	// クライアントのUser-Agentを取得
+	userAgent := r.UserAgent()
+	if userAgent == "" {
+		userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+	}
+
+	// タイムアウト設定 (30秒)
+	ctx, timeCancel := context.WithTimeout(ctx, 30*time.Second)
+	defer timeCancel()
+
+	// 2. Chrome側でページをレンダリングしてHTMLとCSSを取得
+	rawHTML, cssTexts, totalNetworkBytes, err := renderPage(ctx, targetURL, userAgent)
+	if err != nil {
+		log.Printf("Chrome Error [%s]: %v", targetURL, err)
+		http.Error(w, fmt.Sprintf("Render Error: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// 3. HTMLの削ぎ落とし＆URL書き換え＆ツールバー埋め込み処理
+	processedHTML, err := processHTML(rawHTML, targetURL, cssTexts)
+	if err != nil {
+		log.Printf("Process HTML Error [%s]: %v", targetURL, err)
+		http.Error(w, "HTML Parse/Generation Error", http.StatusInternalServerError)
+		return
+	}
+
+	// 4. クライアントへの返却 (Gzip圧縮判定と圧縮処理)
+	finalSize, isGzip, err := compressAndWrite(w, r, processedHTML)
+	if err != nil {
+		log.Printf("Compression/Write Error [%s]: %v", targetURL, err)
+		http.Error(w, "Response Generation Error", http.StatusInternalServerError)
+		return
+	}
+
+	// 5. パフォーマンスログの出力 (goroutineで非同期実行してレスポンスに影響を与えない)
+	originalSize := int(totalNetworkBytes)
+	if originalSize == 0 {
+		originalSize = len(rawHTML)
+	}
+	go logCompression(targetURL, originalSize, finalSize, isGzip, startTime)
+}
+
+// parseTargetURL extracts and resolves the destination target URL from request query parameters.
+func parseTargetURL(r *http.Request) (string, error) {
+	targetURL := r.URL.Query().Get("url")
+	if targetURL == "" {
+		queryVal := r.URL.Query().Get("q")
+		if queryVal == "" {
+			return "", fmt.Errorf("Error: 'url' or 'q' parameter is required")
+		}
+		targetURL = resolveTargetURL(queryVal)
+	}
+	return targetURL, nil
+}
+
+// compressAndWrite compresses processedHTML using gzip if client supports it, writes response, and returns compressed size and status.
+func compressAndWrite(w http.ResponseWriter, r *http.Request, processedHTML string) (int, bool, error) {
+	var responseBytes []byte
+	var finalSize int
+	isGzip := strings.Contains(r.Header.Get("Accept-Encoding"), "gzip")
+
+	if isGzip {
+		var buf bytes.Buffer
+		gz := gzip.NewWriter(&buf)
+		if _, err := gz.Write([]byte(processedHTML)); err != nil {
+			gz.Close()
+			return 0, false, err
+		}
+		if err := gz.Close(); err != nil {
+			return 0, false, err
+		}
+		responseBytes = buf.Bytes()
+		finalSize = len(responseBytes)
+		w.Header().Set("Content-Encoding", "gzip")
+	} else {
+		responseBytes = []byte(processedHTML)
+		finalSize = len(responseBytes)
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	if _, err := w.Write(responseBytes); err != nil {
+		return 0, false, err
+	}
+
+	return finalSize, isGzip, nil
 }
 
 // renderPage renders the page using chromedp and returns the raw HTML, CSS contents, and total network bytes transfered.
@@ -293,13 +331,18 @@ func processHTML(rawHTML string, targetURL string, cssTexts []string) (string, e
 }
 
 // logCompression handles asynchronous compression ratio logging.
-func logCompression(urlStr string, origSize, compSize int, startTime time.Time) {
+func logCompression(urlStr string, origSize, compSize int, isGzip bool, startTime time.Time) {
 	savedBytes := origSize - compSize
 	reductionRate := 0.0
 	if origSize > 0 {
 		reductionRate = (float64(savedBytes) / float64(origSize)) * 100
 	}
-	log.Printf("[SUCCESS] URL: %s | Original: %.2f KB | Compressed: %.2f KB | Saved: %.2f KB (削減率: %.1f%%) | Time: %v",
+	gzipStr := ""
+	if isGzip {
+		gzipStr = " (GZIP)"
+	}
+	log.Printf("[SUCCESS]%s URL: %s | Original: %.2f KB | Compressed: %.2f KB | Saved: %.2f KB (削減率: %.1f%%) | Time: %v",
+		gzipStr,
 		urlStr,
 		float64(origSize)/1024.0,
 		float64(compSize)/1024.0,
@@ -307,46 +350,4 @@ func logCompression(urlStr string, origSize, compSize int, startTime time.Time) 
 		reductionRate,
 		time.Since(startTime),
 	)
-}
-
-// resolveTargetURL converts queryVal to a valid proxy destination URL.
-// It detects whether queryVal is a URL/domain or a search query.
-func resolveTargetURL(queryVal string) string {
-	queryVal = strings.TrimSpace(queryVal)
-	if queryVal == "" {
-		return ""
-	}
-
-	// すでに http:// または https:// で始まっているか
-	lowerVal := strings.ToLower(queryVal)
-	if strings.HasPrefix(lowerVal, "http://") || strings.HasPrefix(lowerVal, "https://") {
-		_, err := url.ParseRequestURI(queryVal)
-		if err == nil {
-			return queryVal
-		}
-	}
-
-	// スキームがない場合、ドメイン/ホスト名らしいか判定
-	// スペースを含まず、かつ「ドットを含む」か「コロンを含む」か「スラッシュを含む」か「localhostである」場合はURLとみなす
-	hasSpace := strings.ContainsAny(queryVal, " \t\n\r")
-	isDomain := false
-	if !hasSpace {
-		if strings.Contains(queryVal, ".") ||
-			strings.Contains(queryVal, ":") ||
-			strings.Contains(queryVal, "/") ||
-			queryVal == "localhost" {
-			isDomain = true
-		}
-	}
-
-	if isDomain {
-		target := "http://" + queryVal
-		_, err := url.ParseRequestURI(target)
-		if err == nil {
-			return target
-		}
-	}
-
-	// それ以外はDuckDuckGo検索クエリとする
-	return "https://html.duckduckgo.com/html/?q=" + url.QueryEscape(queryVal)
 }
