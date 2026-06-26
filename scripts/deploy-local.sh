@@ -42,7 +42,7 @@ pgrep -f "port-forward svc/bare-web-proxy-service" | xargs -r kill || true
 
 echo "Starting port-forward in background (port 3000 -> 80)..."
 # Write logs to workspace to avoid temp directories outside the workspace
-kubectl port-forward svc/bare-web-proxy-service 3000:80 > "$(pwd)/port-forward.log" 2>&1 &
+kubectl port-forward svc/bare-web-proxy-service 3000:80 --address 0.0.0.0 > "$(pwd)/port-forward.log" 2>&1 &
 PF_PID=$!
 
 # Wait briefly and verify it is running
