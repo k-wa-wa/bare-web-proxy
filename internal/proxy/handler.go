@@ -22,6 +22,8 @@ import (
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
+
+	"bare-web-proxy/internal/proxy/modifiers"
 )
 
 var (
@@ -362,6 +364,9 @@ func processHTML(rawHTML string, targetURL string, cssTexts []string) (string, e
 	}
 	doc.Find("body").AppendHtml(fmt.Sprintf("<script>window.__PROXY_TARGET_URL__ = %s;</script>", string(jsTargetURL)))
 	doc.Find("body").AppendHtml("<script>\n" + toolbarJS + "\n</script>")
+
+	// ドメイン固有の修正を適用
+	modifiers.ModifyDocument(doc, targetURL)
 
 	return doc.Html()
 }
