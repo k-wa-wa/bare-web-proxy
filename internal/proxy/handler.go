@@ -196,6 +196,42 @@ func renderPage(ctx context.Context, targetURL string, userAgent string) (string
 	// Chrome側でページをレンダリングしてHTMLを取得
 	err := chromedp.Run(ctx,
 		network.Enable(), // ネットワーク制御を有効化
+		network.SetBlockedURLs().WithURLPatterns([]*network.BlockPattern{
+			// 画像アセット
+			{URLPattern: "*://*:*/*.png", Block: true},
+			{URLPattern: "*://*:*/*.jpg", Block: true},
+			{URLPattern: "*://*:*/*.jpeg", Block: true},
+			{URLPattern: "*://*:*/*.gif", Block: true},
+			{URLPattern: "*://*:*/*.webp", Block: true},
+			{URLPattern: "*://*:*/*.svg", Block: true},
+			{URLPattern: "*://*:*/*.ico", Block: true},
+			// 動画・音声アセット
+			{URLPattern: "*://*:*/*.mp4", Block: true},
+			{URLPattern: "*://*:*/*.webm", Block: true},
+			{URLPattern: "*://*:*/*.m3u8", Block: true},
+			{URLPattern: "*://*:*/*.mp3", Block: true},
+			{URLPattern: "*://*:*/*.ogg", Block: true},
+			{URLPattern: "*://*:*/*.wav", Block: true},
+			{URLPattern: "*://*:*/*.ts", Block: true},
+			// フォントアセット
+			{URLPattern: "*://*:*/*.woff", Block: true},
+			{URLPattern: "*://*:*/*.woff2", Block: true},
+			{URLPattern: "*://*:*/*.ttf", Block: true},
+			{URLPattern: "*://*:*/*.otf", Block: true},
+			// 広告・アナリティクス・トラッカー関連
+			{URLPattern: "*://*.google-analytics.com/*", Block: true},
+			{URLPattern: "*://*.googlesyndication.com/*", Block: true},
+			{URLPattern: "*://*.doubleclick.net/*", Block: true},
+			{URLPattern: "*://*analytics*/*", Block: true},
+			{URLPattern: "*://*adservice*/*", Block: true},
+			{URLPattern: "*://*adsystem*/*", Block: true},
+			{URLPattern: "*://*adnxs*/*", Block: true},
+			{URLPattern: "*://*.scorecardresearch.com/*", Block: true},
+			{URLPattern: "*://*.criteo.com/*", Block: true},
+			{URLPattern: "*://*.hotjar.com/*", Block: true},
+			{URLPattern: "*://*.outbrain.com/*", Block: true},
+			{URLPattern: "*://*.taboola.com/*", Block: true},
+		}),
 		css.Enable(),     // CSSドメインを有効化
 		// クライアントのUser-Agentと、Accept-Language/Platformを設定してブラウザらしく見せる
 		emulation.SetUserAgentOverride(userAgent).
