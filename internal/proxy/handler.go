@@ -35,8 +35,8 @@ var (
 	concurrentSemaphore = make(chan struct{}, 5) // 最大同時リクエスト数を5に制限
 )
 
-//go:embed frontend/dist
-var frontendFS embed.FS
+//go:embed static
+var staticFS embed.FS
 
 type assetEntry struct {
 	content     []byte
@@ -65,9 +65,9 @@ func buildAssetMap() map[string]assetEntry {
 		".html": "text/html; charset=utf-8",
 	}
 
-	dirEntries, err := frontendFS.ReadDir("frontend/dist")
+	dirEntries, err := staticFS.ReadDir("static")
 	if err != nil {
-		panic(fmt.Sprintf("failed to read embedded frontend/dist: %v", err))
+		panic(fmt.Sprintf("failed to read embedded static: %v", err))
 	}
 
 	m := make(map[string]assetEntry, len(dirEntries))
@@ -80,7 +80,7 @@ func buildAssetMap() map[string]assetEntry {
 		if !ok {
 			continue
 		}
-		content, err := frontendFS.ReadFile("frontend/dist/" + name)
+		content, err := staticFS.ReadFile("static/" + name)
 		if err != nil {
 			panic(fmt.Sprintf("embedded asset not found: %s: %v", name, err))
 		}

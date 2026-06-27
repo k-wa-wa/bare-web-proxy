@@ -6,7 +6,8 @@ FROM node:22-alpine AS frontend-builder
 WORKDIR /frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
-COPY frontend/*.ts frontend/*.css frontend/*.html frontend/*.mjs frontend/tsconfig.json ./
+COPY frontend/src ./src
+COPY frontend/build.mjs frontend/tsconfig.json ./
 RUN npm run build
 
 # -----------------
@@ -22,7 +23,7 @@ COPY cmd/ ./cmd/
 COPY internal/ ./internal/
 
 # frontend-builderで生成したdist/でプレースホルダーを上書き
-COPY --from=frontend-builder /frontend/dist ./internal/proxy/frontend/dist/
+COPY --from=frontend-builder /frontend/dist ./internal/proxy/static/
 
 # スタティックリンクでC言語依存を無くし、ローカルvendorを利用して軽量化
 RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -o proxy-app cmd/proxy/main.go

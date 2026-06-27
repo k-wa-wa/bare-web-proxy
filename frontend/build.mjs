@@ -2,7 +2,9 @@ import * as esbuild from 'esbuild';
 import { minify as minifyHtml } from 'html-minifier-terser';
 import { readFile, writeFile, mkdir } from 'fs/promises';
 
-await mkdir('dist', { recursive: true });
+const outDir = 'dist';
+
+await mkdir(outDir, { recursive: true });
 
 // CSS imports を CSS としてミニファイしてからテキスト文字列として返すプラグイン
 const cssMinifyPlugin = {
@@ -18,24 +20,24 @@ const cssMinifyPlugin = {
 
 await Promise.all([
     esbuild.build({
-        entryPoints: ['toolbar.ts'],
+        entryPoints: ['src/toolbar.ts'],
         bundle: true,
         minify: true,
         target: 'es2020',
-        outfile: 'dist/toolbar.js',
+        outfile: `${outDir}/toolbar.js`,
         plugins: [cssMinifyPlugin],
     }),
     esbuild.build({
-        entryPoints: ['reader.css'],
+        entryPoints: ['src/reader.css'],
         minify: true,
-        outfile: 'dist/reader.css',
+        outfile: `${outDir}/reader.css`,
     }),
-    readFile('index.html', 'utf8').then(src =>
+    readFile('src/index.html', 'utf8').then(src =>
         minifyHtml(src, {
             collapseWhitespace: true,
             removeComments: true,
             minifyCSS: true,
             minifyJS: true,
         })
-    ).then(html => writeFile('dist/index.html', html)),
+    ).then(html => writeFile(`${outDir}/index.html`, html)),
 ]);
