@@ -1,11 +1,12 @@
 {
   "private": true,
   "scripts": {
-    "build": "mkdir -p dist && esbuild toolbar.ts --bundle --minify --target=es2020 --loader:.css=text --outfile=dist/toolbar.js && cp reader.css index.html dist/",
+    "build": "node build.mjs",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "esbuild": "0.25.5",
+    "html-minifier-terser": "^7.2.0",
     "typescript": "5.8.3"
   }
 }

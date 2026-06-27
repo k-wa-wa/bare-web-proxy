@@ -6,7 +6,7 @@ FROM node:22-alpine AS frontend-builder
 WORKDIR /frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
-COPY frontend/*.ts frontend/*.css frontend/*.html frontend/tsconfig.json ./
+COPY frontend/*.ts frontend/*.css frontend/*.html frontend/*.mjs frontend/tsconfig.json ./
 RUN npm run build
 
 # -----------------
