@@ -1,5 +1,16 @@
 # -----------------
-# 1. ビルドステージ
+# 1. フロントエンドビルドステージ
+# -----------------
+FROM node:22-alpine AS frontend-builder
+
+WORKDIR /frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/toolbar.ts frontend/reader.css frontend/index.html ./
+RUN npm run build
+
+# -----------------
+# 2. Goビルドステージ
 # -----------------
 FROM golang:1.26-alpine AS builder
 
@@ -10,11 +21,14 @@ COPY vendor/ ./vendor/
 COPY cmd/ ./cmd/
 COPY internal/ ./internal/
 
+# frontend-builderで生成したdist/でプレースホルダーを上書き
+COPY --from=frontend-builder /frontend/dist ./internal/proxy/frontend/dist/
+
 # スタティックリンクでC言語依存を無くし、ローカルvendorを利用して軽量化
 RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -o proxy-app cmd/proxy/main.go
 
 # -----------------
-# 2. 実行ステージ
+# 3. 実行ステージ
 # -----------------
 FROM scratch
 

@@ -1,10 +1,9 @@
-(function() {
+(function () {
     const container = document.getElementById('proxy-toolbar-container');
     if (!container) return;
-    
-    const shadow = container.attachShadow({mode: 'open'});
-    
-    // Shadow DOM 内の CSS (ガラスモーフィズム、モバイルフレンドリー、統一された丸型ボタンデザイン)
+
+    const shadow = container.attachShadow({ mode: 'open' });
+
     const style = document.createElement('style');
     style.textContent = `
         :host {
@@ -126,12 +125,12 @@
         }
     `;
     shadow.appendChild(style);
-    
+
     const toolbar = document.createElement('div');
     toolbar.className = 'toolbar';
-    
-    const targetURL = window.__PROXY_TARGET_URL__ || '';
-    
+
+    const targetURL: string = (window as Window & { __PROXY_TARGET_URL__?: string }).__PROXY_TARGET_URL__ ?? '';
+
     toolbar.innerHTML = `
         <div class="left-section">
             <a href="/" target="_self" class="logo" title="ホームへ戻る">🏠</a>
@@ -145,93 +144,83 @@
             <a href="${targetURL}" target="_blank" rel="noopener noreferrer" class="btn" title="元のURLを新しいタブで開く">🔗</a>
         </div>
     `;
-    
+
     shadow.appendChild(toolbar);
-    
-    const btnStyle = shadow.getElementById('btn-style');
-    const btnReload = shadow.getElementById('btn-reload');
-    const urlText = shadow.getElementById('url-text');
-    
-    // URLのコピー機能
+
+    const btnStyle = shadow.getElementById('btn-style') as HTMLButtonElement;
+    const btnReload = shadow.getElementById('btn-reload') as HTMLButtonElement;
+    const urlText = shadow.getElementById('url-text') as HTMLDivElement;
+
     urlText.addEventListener('click', () => {
         navigator.clipboard.writeText(targetURL).then(() => {
-            const origText = urlText.textContent;
-            urlText.textContent = "コピーしました！";
-            urlText.style.color = "#10b981";
+            const origText = urlText.textContent ?? '';
+            urlText.textContent = 'コピーしました！';
+            urlText.style.color = '#10b981';
             setTimeout(() => {
                 urlText.textContent = origText;
-                urlText.style.color = "";
+                urlText.style.color = '';
             }, 1500);
-        }).catch(err => {
+        }).catch((err: unknown) => {
             console.error('Failed to copy: ', err);
         });
     });
-    
-    // リロード処理
+
     btnReload.addEventListener('click', () => {
         window.location.reload();
     });
-    
-    // スタイル切り替え処理
+
     const storageKey = 'proxy-reader-mode';
     let isReader = localStorage.getItem(storageKey) === 'true';
-    
-    function updateStyles() {
-        const originalStyles = document.querySelectorAll('style[data-proxy-style="original"]');
+
+    function updateStyles(): void {
+        const originalStyles = document.querySelectorAll<HTMLStyleElement>('style[data-proxy-style="original"]');
         if (isReader) {
             document.body.classList.add('proxy-reader-mode');
-            originalStyles.forEach(s => s.disabled = true);
+            originalStyles.forEach(s => { s.disabled = true; });
             btnStyle.classList.add('active');
             btnStyle.title = '標準スタイルに戻す';
         } else {
             document.body.classList.remove('proxy-reader-mode');
-            originalStyles.forEach(s => s.disabled = false);
+            originalStyles.forEach(s => { s.disabled = false; });
             btnStyle.classList.remove('active');
             btnStyle.title = 'リーダーモード (CSS無効化)';
         }
     }
-    
+
     btnStyle.addEventListener('click', () => {
         isReader = !isReader;
         localStorage.setItem(storageKey, isReader ? 'true' : 'false');
         updateStyles();
     });
-    
-    // 初回適用
+
     updateStyles();
-    
-    // スクロール時のツールバー表示・非表示制御
+
     let lastScrollY = window.scrollY || document.documentElement.scrollTop;
-    const scrollThreshold = 10; // 判定用のスクロール量閾値(px)
-    
+    const scrollThreshold = 10;
+
     window.addEventListener('scroll', () => {
         const currentScrollY = window.scrollY || document.documentElement.scrollTop;
-        
-        // 最上部に近い場合は常に表示
+
         if (currentScrollY <= 10) {
             toolbar.classList.remove('hidden');
             lastScrollY = currentScrollY;
             return;
         }
-        
-        // 閾値以上のスクロール移動があった場合のみ判定
+
         if (Math.abs(currentScrollY - lastScrollY) < scrollThreshold) {
             return;
         }
-        
+
         if (currentScrollY > lastScrollY) {
-            // 下スクロール -> 隠す
             toolbar.classList.add('hidden');
         } else {
-            // 上スクロール -> 見せる
             toolbar.classList.remove('hidden');
         }
-        
+
         lastScrollY = currentScrollY;
     }, { passive: true });
-    
-    // ボディのパディング調整
-    const adjustBody = () => {
+
+    const adjustBody = (): void => {
         document.body.style.paddingTop = '48px';
     };
     if (document.readyState === 'loading') {

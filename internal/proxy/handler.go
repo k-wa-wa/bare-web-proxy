@@ -5,7 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
-	_ "embed"
+	"embed"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -34,60 +34,76 @@ var (
 	concurrentSemaphore = make(chan struct{}, 5) // 最大同時リクエスト数を5に制限
 )
 
-//go:embed frontend/index.html
-var frontendHTML string
+//go:embed frontend/dist
+var frontendFS embed.FS
 
-//go:embed frontend/toolbar.js
-var toolbarJS string
-
-//go:embed frontend/reader.css
-var readerCSS string
+type assetEntry struct {
+	content     []byte
+	contentType string
+	etag        string
+}
 
 // Handler handles HTTP requests for root and proxy endpoints
 type Handler struct {
 	allocatorContext context.Context
-	toolbarHash      string
-	readerHash       string
+	assetMap         map[string]assetEntry
 }
 
 // NewHandler creates a new Handler with the given remote allocator context
 func NewHandler(allocatorContext context.Context) *Handler {
 	return &Handler{
 		allocatorContext: allocatorContext,
-		toolbarHash:      getHash(toolbarJS),
-		readerHash:       getHash(readerCSS),
+		assetMap:         buildAssetMap(),
 	}
 }
 
-func getHash(content string) string {
-	hash := sha256.Sum256([]byte(content))
-	return hex.EncodeToString(hash[:])[:8]
+func buildAssetMap() map[string]assetEntry {
+	defs := []struct {
+		filename    string
+		contentType string
+	}{
+		{"toolbar.js", "application/javascript; charset=utf-8"},
+		{"reader.css", "text/css; charset=utf-8"},
+	}
+	m := make(map[string]assetEntry, len(defs))
+	for _, d := range defs {
+		content, err := frontendFS.ReadFile("frontend/dist/" + d.filename)
+		if err != nil {
+			panic(fmt.Sprintf("embedded asset not found: %s: %v", d.filename, err))
+		}
+		hash := sha256.Sum256(content)
+		m[d.filename] = assetEntry{
+			content:     content,
+			contentType: d.contentType,
+			etag:        hex.EncodeToString(hash[:])[:8],
+		}
+	}
+	return m
 }
 
 // HandleAssets serves static assets like toolbar.js and reader.css with aggressive caching
 func (h *Handler) HandleAssets(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
-	var content string
-	var contentType string
-	var contentHash string
-
+	var filename string
 	if strings.HasSuffix(path, "toolbar.js") {
-		content = toolbarJS
-		contentType = "application/javascript; charset=utf-8"
-		contentHash = h.toolbarHash
+		filename = "toolbar.js"
 	} else if strings.HasSuffix(path, "reader.css") {
-		content = readerCSS
-		contentType = "text/css; charset=utf-8"
-		contentHash = h.readerHash
+		filename = "reader.css"
 	} else {
 		http.NotFound(w, r)
 		return
 	}
 
-	w.Header().Set("ETag", `"`+contentHash+`"`)
+	entry, ok := h.assetMap[filename]
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+
+	w.Header().Set("ETag", `"`+entry.etag+`"`)
 
 	// If-None-Match による検証（304 返却）
-	if r.Header.Get("If-None-Match") == `"`+contentHash+`"` {
+	if r.Header.Get("If-None-Match") == `"`+entry.etag+`"` {
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
@@ -95,9 +111,9 @@ func (h *Handler) HandleAssets(w http.ResponseWriter, r *http.Request) {
 	// キャッシュの再検証（If-None-Match）を毎回強制する
 	w.Header().Set("Cache-Control", "no-cache")
 
-	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Type", entry.contentType)
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(content))
+	w.Write(entry.content)
 }
 
 // HandleRoot serves the main proxy UI page
@@ -106,8 +122,13 @@ func (h *Handler) HandleRoot(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	content, err := frontendFS.ReadFile("frontend/dist/index.html")
+	if err != nil {
+		http.Error(w, "not found", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(frontendHTML))
+	w.Write(content)
 }
 
 // HandleProxy handles proxy request, rendering pages using headless Chrome and rewriting HTML
