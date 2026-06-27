@@ -1,7 +1,7 @@
 {
   "private": true,
   "scripts": {
-    "build": "mkdir -p dist && esbuild toolbar.ts --minify --target=es2020 --outfile=dist/toolbar.js && cp reader.css index.html dist/",
+    "build": "mkdir -p dist && esbuild toolbar.ts --bundle --minify --target=es2020 --loader:.css=text --outfile=dist/toolbar.js && cp reader.css index.html dist/",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

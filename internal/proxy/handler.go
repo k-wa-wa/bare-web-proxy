@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"path"
 	"regexp"
 	"strings"
 	"sync"
@@ -58,23 +59,35 @@ func NewHandler(allocatorContext context.Context) *Handler {
 }
 
 func buildAssetMap() map[string]assetEntry {
-	defs := []struct {
-		filename    string
-		contentType string
-	}{
-		{"toolbar.js", "application/javascript; charset=utf-8"},
-		{"reader.css", "text/css; charset=utf-8"},
+	extTypes := map[string]string{
+		".js":   "application/javascript; charset=utf-8",
+		".css":  "text/css; charset=utf-8",
+		".html": "text/html; charset=utf-8",
 	}
-	m := make(map[string]assetEntry, len(defs))
-	for _, d := range defs {
-		content, err := frontendFS.ReadFile("frontend/dist/" + d.filename)
+
+	dirEntries, err := frontendFS.ReadDir("frontend/dist")
+	if err != nil {
+		panic(fmt.Sprintf("failed to read embedded frontend/dist: %v", err))
+	}
+
+	m := make(map[string]assetEntry, len(dirEntries))
+	for _, de := range dirEntries {
+		if de.IsDir() {
+			continue
+		}
+		name := de.Name()
+		ct, ok := extTypes[path.Ext(name)]
+		if !ok {
+			continue
+		}
+		content, err := frontendFS.ReadFile("frontend/dist/" + name)
 		if err != nil {
-			panic(fmt.Sprintf("embedded asset not found: %s: %v", d.filename, err))
+			panic(fmt.Sprintf("embedded asset not found: %s: %v", name, err))
 		}
 		hash := sha256.Sum256(content)
-		m[d.filename] = assetEntry{
+		m[name] = assetEntry{
 			content:     content,
-			contentType: d.contentType,
+			contentType: ct,
 			etag:        hex.EncodeToString(hash[:])[:8],
 		}
 	}
@@ -83,17 +96,7 @@ func buildAssetMap() map[string]assetEntry {
 
 // HandleAssets serves static assets like toolbar.js and reader.css with aggressive caching
 func (h *Handler) HandleAssets(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Path
-	var filename string
-	if strings.HasSuffix(path, "toolbar.js") {
-		filename = "toolbar.js"
-	} else if strings.HasSuffix(path, "reader.css") {
-		filename = "reader.css"
-	} else {
-		http.NotFound(w, r)
-		return
-	}
-
+	filename := path.Base(r.URL.Path)
 	entry, ok := h.assetMap[filename]
 	if !ok {
 		http.NotFound(w, r)
@@ -122,13 +125,9 @@ func (h *Handler) HandleRoot(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	content, err := frontendFS.ReadFile("frontend/dist/index.html")
-	if err != nil {
-		http.Error(w, "not found", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write(content)
+	entry := h.assetMap["index.html"]
+	w.Header().Set("Content-Type", entry.contentType)
+	w.Write(entry.content)
 }
 
 // HandleProxy handles proxy request, rendering pages using headless Chrome and rewriting HTML
