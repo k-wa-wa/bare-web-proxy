@@ -13,6 +13,11 @@ spec:
     metadata:
       labels:
         app: bare-web-proxy
+      annotations:
+        keel.sh/policy: force
+        keel.sh/trigger: poll
+        keel.sh/pollSchedule: "@every 2m"
+        keel.sh/monitorContainers: "proxy-app"
     spec:
       containers:
       # --- コンテナ1: Chromeブラウザ本体 ---
@@ -38,7 +43,7 @@ spec:
       # --- コンテナ2: あなたのGoプログラム ---
       - name: proxy-app
         image: ghcr.io/k-wa-wa/bare-web-proxy:latest
-        imagePullPolicy: IfNotPresent
+        imagePullPolicy: Always
         ports:
         - containerPort: 3000
         env:

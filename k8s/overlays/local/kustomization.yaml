@@ -7,3 +7,19 @@ images:
 - name: ghcr.io/k-wa-wa/bare-web-proxy
   newName: bare-web-proxy
   newTag: local
+
+patches:
+- target:
+    kind: Deployment
+    name: bare-web-proxy
+  patch: |
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: bare-web-proxy
+    spec:
+      template:
+        spec:
+          containers:
+          - name: proxy-app
+            imagePullPolicy: IfNotPresent
