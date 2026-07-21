@@ -4,6 +4,11 @@ metadata:
   name: bare-web-proxy
   labels:
     app: bare-web-proxy
+  annotations:
+    keel.sh/policy: force
+    keel.sh/trigger: poll
+    keel.sh/pollSchedule: "@every 2m"
+    keel.sh/monitorContainers: "proxy-app"
 spec:
   replicas: 1
   selector:
@@ -13,11 +18,6 @@ spec:
     metadata:
       labels:
         app: bare-web-proxy
-      annotations:
-        keel.sh/policy: force
-        keel.sh/trigger: poll
-        keel.sh/pollSchedule: "@every 2m"
-        keel.sh/monitorContainers: "proxy-app"
     spec:
       containers:
       # --- コンテナ1: Chromeブラウザ本体 ---
