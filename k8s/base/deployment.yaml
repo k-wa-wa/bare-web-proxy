@@ -9,6 +9,7 @@ metadata:
     keel.sh/trigger: poll
     keel.sh/pollSchedule: "@every 2m"
     keel.sh/monitorContainers: "proxy-app"
+    keel.sh/matchTag: "true"
 spec:
   replicas: 1
   selector:
