@@ -13,8 +13,7 @@
 | `internal/proxy/modifiers/` | ドメイン固有の表示崩れ対策パッチ |
 | `internal/proxy/static/` | フロントエンドのビルド成果物。**手で編集しない**（`frontend/` からビルドして生成） |
 | `frontend/` | ツールバー・リーダーモードCSSのソース（`npm run build`） |
-| `k8s/` | Deployment/Service/Ingress 定義（`base` / `overlays/prod` / `overlays/local`） |
-| `scripts/deploy-local.sh` | `kind` を使ったローカル検証用デプロイ |
+| `k8s/` | Deployment/Service/Ingress 定義（`base` / `overlays/prod`）。`overlays/local` は `benchmark/` 用でAgentの検証には使わない |
 
 ## 2. 表示崩れ調査の当たりの付け方
 
@@ -34,7 +33,7 @@ go vet ./...
 
 `frontend/` を変更した場合は `npm ci && npm run typecheck && npm run build` も行う。ビルド成果物を `internal/proxy/static/` へ手動コピーする運用は取らない。Dockerビルドの成否はCIで確認するためローカルでは行わない。
 
-表示崩れの実地検証は `bash scripts/deploy-local.sh` で `kind` 上にデプロイし、`http://localhost:3000/proxy?url=<対象URL>` を開いて確認する。
+`kind` によるローカル起動確認はAgentでは行わない。表示崩れの実地検証が必要な場合は、変更内容と確認観点をPR上で説明し、人間によるレビューを依頼する。
 
 ## 4. 対応済みの制約
 
