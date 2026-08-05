@@ -32,7 +32,7 @@ go build ./...
 go vet ./...
 ```
 
-`frontend/` を変更した場合は `npm ci && npm run typecheck && npm run build` も行う。ビルド成果物を `internal/proxy/static/` へ手動コピーする運用は取らず、Dockerビルドで反映させる。
+`frontend/` を変更した場合は `npm ci && npm run typecheck && npm run build` も行う。ビルド成果物を `internal/proxy/static/` へ手動コピーする運用は取らない。Dockerビルドの成否はCIで確認するためローカルでは行わない。
 
 表示崩れの実地検証は `bash scripts/deploy-local.sh` で `kind` 上にデプロイし、`http://localhost:3000/proxy?url=<対象URL>` を開いて確認する。
 
