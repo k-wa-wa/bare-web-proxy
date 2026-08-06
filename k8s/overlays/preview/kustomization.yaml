@@ -1,0 +1,14 @@
+# PRのpreview環境。
+# - proxy-app: このPRのイメージ (headless-chrome は upstream イメージのまま)
+# - Secret も PVC も無いため、pechka と違い argocd-vault-plugin を使う別Applicationは不要で、
+#   このoverlay (ネイティブkustomizeのみ) 1本で完結する。
+#
+# namespace名・イメージタグ・ingress hostはArgoCD側のネイティブなkustomize.namespace/images/patches
+# 上書きでPRごとに書き換える (k8s/overlays/prod とは独立)。
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - namespace.yaml
+  - ../../base
+  - ingress.yaml

@@ -1,0 +1,27 @@
+# host / tls は ApplicationSet の template (ArgoCDネイティブのkustomize.patches) で
+# PR ごとに書き換えられる (base値はダミー)。
+# *.cluster.wpc は CoreDNS (nix/hosts/loadbalancer/dns.nix) がワイルドカードで
+# 192.168.5.200 に解決するため、PRごとのホスト追加は不要。
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: bare-web-proxy-ingress
+  annotations:
+    cert-manager.io/cluster-issuer: "ca-clusterissuer"
+spec:
+  ingressClassName: cilium
+  tls:
+    - hosts:
+        - DUMMY
+      secretName: bare-web-proxy-tls-secret
+  rules:
+    - host: DUMMY
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: bare-web-proxy-service
+                port:
+                  number: 80
