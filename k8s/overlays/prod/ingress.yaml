@@ -3,15 +3,15 @@ kind: Ingress
 metadata:
   name: bare-web-proxy-ingress
   annotations:
-    cert-manager.io/cluster-issuer: "ca-clusterissuer"
+    cert-manager.io/cluster-issuer: "letsencrypt-cloudflare-prod"
 spec:
   ingressClassName: cilium
   tls:
   - hosts:
-    - bwproxy.cluster.wpc
+    - bwproxy.wpcapp.net
     secretName: bare-web-proxy-tls-secret
   rules:
-  - host: bwproxy.cluster.wpc
+  - host: bwproxy.wpcapp.net
     http:
       paths:
       - path: /
