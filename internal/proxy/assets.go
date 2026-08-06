@@ -20,9 +20,13 @@ type assetEntry struct {
 
 func buildAssetMap() map[string]assetEntry {
 	extTypes := map[string]string{
-		".js":   "application/javascript; charset=utf-8",
-		".css":  "text/css; charset=utf-8",
-		".html": "text/html; charset=utf-8",
+		".js":          "application/javascript; charset=utf-8",
+		".css":         "text/css; charset=utf-8",
+		".html":        "text/html; charset=utf-8",
+		".png":         "image/png",
+		".svg":         "image/svg+xml",
+		".ico":         "image/x-icon",
+		".webmanifest": "application/manifest+json",
 	}
 
 	dirEntries, err := staticFS.ReadDir("static")
@@ -55,6 +59,10 @@ func buildAssetMap() map[string]assetEntry {
 }
 
 func (h *Handler) HandleRoot(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/favicon.ico" {
+		h.HandleAssets(w, r)
+		return
+	}
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return

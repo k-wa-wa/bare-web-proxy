@@ -1,10 +1,21 @@
 import * as esbuild from 'esbuild';
 import { minify as minifyHtml } from 'html-minifier-terser';
-import { readFile, writeFile, mkdir } from 'fs/promises';
+import { readFile, writeFile, copyFile, mkdir } from 'fs/promises';
 
 const outDir = 'dist';
 
 await mkdir(outDir, { recursive: true });
+
+// アイコン類はそのままコピーする
+const staticAssets = [
+    'apple-touch-icon.png',
+    'icon-192.png',
+    'icon-512.png',
+    'favicon.svg',
+    'favicon.png',
+    'favicon.ico',
+    'site.webmanifest',
+];
 
 // CSS imports を CSS としてミニファイしてからテキスト文字列として返すプラグイン
 const cssMinifyPlugin = {
@@ -40,4 +51,5 @@ await Promise.all([
             minifyJS: true,
         })
     ).then(html => writeFile(`${outDir}/index.html`, html)),
+    ...staticAssets.map(name => copyFile(`src/${name}`, `${outDir}/${name}`)),
 ]);
