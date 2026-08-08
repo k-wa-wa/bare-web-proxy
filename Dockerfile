@@ -17,7 +17,7 @@ FROM golang:1.26-alpine AS builder
 
 WORKDIR /app
 COPY go.mod go.sum ./
-COPY vendor/ ./vendor/
+RUN go mod download
 
 COPY cmd/ ./cmd/
 COPY internal/ ./internal/
@@ -25,8 +25,8 @@ COPY internal/ ./internal/
 # frontend-builderで生成したdist/でプレースホルダーを上書き
 COPY --from=frontend-builder /frontend/dist ./internal/proxy/static/
 
-# スタティックリンクでC言語依存を無くし、ローカルvendorを利用して軽量化
-RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -o proxy-app cmd/proxy/main.go
+# スタティックリンクでC言語依存を無くして軽量化
+RUN CGO_ENABLED=0 GOOS=linux go build -o proxy-app cmd/proxy/main.go
 
 # -----------------
 # 3. 実行ステージ
