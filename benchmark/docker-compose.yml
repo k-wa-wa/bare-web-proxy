@@ -1,0 +1,29 @@
+services:
+  headless-chrome:
+    image: chromedp/headless-shell:latest
+    command:
+      - --blink-settings=imagesEnabled=false
+      - --disable-gpu
+      - --disable-software-rasterizer
+      - --disable-extensions
+
+  bare-web-proxy:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    environment:
+      PORT: "3000"
+      CHROME_URL: "ws://headless-chrome:9222"
+    ports:
+      - "3000:3000"
+    depends_on:
+      - headless-chrome
+
+  # サービス名は benchmark/client/main.go の mockInternalBase (プロキシ
+  # コンテナから見たモックサーバーのアドレス) とそろえる必要がある。
+  bare-web-proxy-mock-service:
+    build:
+      context: ..
+      dockerfile: benchmark/mockserver/Dockerfile
+    ports:
+      - "3003:3003"
