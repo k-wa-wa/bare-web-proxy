@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -16,6 +18,24 @@ import (
 const defaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 var concurrentSemaphore = make(chan struct{}, 5)
+
+// Machine-readable failure reasons returned in error responses. Programmatic callers
+// should branch on these rather than parsing the human-readable "error" message.
+const (
+	reasonInvalidURL       = "invalid_url"
+	reasonOverloaded       = "overloaded"
+	reasonRenderTimeout    = "render_timeout"
+	reasonRenderBlocked    = "render_blocked"
+	reasonRenderFailed     = "render_failed"
+	reasonProcessingFailed = "processing_failed"
+)
+
+// errorResponse is the structured JSON body returned for any failed /proxy request.
+type errorResponse struct {
+	Error  string `json:"error"`
+	Reason string `json:"reason"`
+	Status int    `json:"status,omitempty"`
+}
 
 // Handler handles HTTP requests for the proxy.
 type Handler struct {
@@ -32,10 +52,19 @@ func NewHandler(allocatorContext context.Context) *Handler {
 }
 
 // HandleProxy renders a target page via headless Chrome and returns processed HTML.
+//
+// By default the response is browser-oriented HTML with a toolbar injected. Callers that
+// send the request header "X-Program-Mode: true" receive the same content-bearing HTML
+// without the toolbar/script embeds, so programmatic callers can more easily isolate the
+// article body. On failure, the response is always a JSON body of the form
+// {"error": "...", "reason": "..."} (see the reason* constants) with an appropriate 4xx/5xx
+// status code, so callers never mistake a failure for a successful fetch.
 func (h *Handler) HandleProxy(w http.ResponseWriter, r *http.Request) {
+	programMode := isProgramMode(r)
+
 	targetURL, err := parseTargetURL(r)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, reasonInvalidURL, err.Error(), 0)
 		return
 	}
 
@@ -43,7 +72,7 @@ func (h *Handler) HandleProxy(w http.ResponseWriter, r *http.Request) {
 	case concurrentSemaphore <- struct{}{}:
 		defer func() { <-concurrentSemaphore }()
 	case <-r.Context().Done():
-		http.Error(w, "server busy", http.StatusServiceUnavailable)
+		writeJSONError(w, http.StatusServiceUnavailable, reasonOverloaded, "server busy", 0)
 		return
 	}
 
@@ -59,17 +88,24 @@ func (h *Handler) HandleProxy(w http.ResponseWriter, r *http.Request) {
 		userAgent = defaultUserAgent
 	}
 
-	rawHTML, cssTexts, totalNetworkBytes, err := renderPage(ctx, targetURL, userAgent)
+	rawHTML, cssTexts, totalNetworkBytes, upstreamStatus, err := renderPage(ctx, targetURL, userAgent)
 	if err != nil {
-		slog.Error("chrome render failed", slog.String("url", targetURL), slog.Any("error", err))
-		http.Error(w, fmt.Sprintf("render error: %v", err), http.StatusInternalServerError)
+		reason, statusCode, message := classifyRenderError(err)
+		slog.Error("chrome render failed", slog.String("url", targetURL), slog.String("reason", reason), slog.Any("error", err))
+		writeJSONError(w, statusCode, reason, message, 0)
 		return
 	}
 
-	processedHTML, err := h.processHTML(rawHTML, targetURL, cssTexts)
+	if upstreamStatus >= 400 {
+		slog.Warn("target site returned an error status", slog.String("url", targetURL), slog.Int("status", upstreamStatus))
+		writeJSONError(w, http.StatusBadGateway, reasonRenderBlocked, fmt.Sprintf("target site responded with status %d", upstreamStatus), upstreamStatus)
+		return
+	}
+
+	processedHTML, err := h.processHTML(rawHTML, targetURL, cssTexts, programMode)
 	if err != nil {
 		slog.Error("html processing failed", slog.String("url", targetURL), slog.Any("error", err))
-		http.Error(w, "html processing error", http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, reasonProcessingFailed, "html processing error", 0)
 		return
 	}
 
@@ -94,6 +130,36 @@ func parseTargetURL(r *http.Request) (string, error) {
 		return resolveTargetURL(q), nil
 	}
 	return "", fmt.Errorf("'url' or 'q' parameter is required")
+}
+
+// isProgramMode reports whether the caller requested the toolbar-free, program-oriented
+// response via the "X-Program-Mode" request header.
+func isProgramMode(r *http.Request) bool {
+	v := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Program-Mode")))
+	return v == "true" || v == "1"
+}
+
+// classifyRenderError maps a renderPage error to a machine-readable reason, HTTP status
+// code, and human-readable message.
+func classifyRenderError(err error) (reason string, statusCode int, message string) {
+	if errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "context deadline exceeded") {
+		return reasonRenderTimeout, http.StatusGatewayTimeout, "render timed out"
+	}
+	return reasonRenderFailed, http.StatusBadGateway, fmt.Sprintf("render error: %v", err)
+}
+
+// writeJSONError writes a structured JSON error response so callers can reliably detect
+// and classify a failed request instead of mistaking it for a successful fetch.
+func writeJSONError(w http.ResponseWriter, statusCode int, reason, message string, upstreamStatus int) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(statusCode)
+	if err := json.NewEncoder(w).Encode(errorResponse{
+		Error:  message,
+		Reason: reason,
+		Status: upstreamStatus,
+	}); err != nil {
+		slog.Error("failed to encode error response", slog.Any("error", err))
+	}
 }
 
 func compressAndWrite(w http.ResponseWriter, r *http.Request, html string) (int, bool, error) {

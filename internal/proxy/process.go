@@ -17,7 +17,9 @@ const proxyBaseURL = "/proxy"
 var styleCloseRegex = regexp.MustCompile(`(?i)</style>`)
 
 // processHTML strips unwanted tags, injects CSS, rewrites links, and embeds the toolbar.
-func (h *Handler) processHTML(rawHTML string, targetURL string, cssTexts []string) (string, error) {
+// When programMode is true, the toolbar container and its script embeds are skipped so
+// programmatic callers receive only content-relevant markup.
+func (h *Handler) processHTML(rawHTML string, targetURL string, cssTexts []string, programMode bool) (string, error) {
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(rawHTML))
 	if err != nil {
 		return "", err
@@ -26,7 +28,9 @@ func (h *Handler) processHTML(rawHTML string, targetURL string, cssTexts []strin
 	stripTags(doc)
 	injectCSS(doc, cssTexts)
 	rewriteLinks(doc, targetURL)
-	injectToolbar(doc, targetURL)
+	if !programMode {
+		injectToolbar(doc, targetURL)
+	}
 	modifiers.ModifyDocument(doc, targetURL)
 
 	return doc.Html()
