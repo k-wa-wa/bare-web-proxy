@@ -29,7 +29,7 @@ Go と Headless Chrome（サイドカー構成）を利用して、データ通�
 
 ### プログラムモード（ツールバー除去）
 
-リクエストヘッダ `X-Program-Mode: true` を付けて `/proxy` を呼び出すと、ツールバー用の `<div id="proxy-toolbar-container">` や `<script>` 埋め込みを省略した HTML を返す。デフォルト（ヘッダなし）では従来通りツールバー付き HTML を返すため、既存のブラウザ利用には影響しない。
+リクエストヘッダ `X-Program-Mode: true` を付けて `/proxy` を呼び出すと、ツールバー用の `<div id="proxy-toolbar-container">` や `<script>` 埋め込みを省略した HTML を返す。加えて、ページ内の `<a href>` を `/proxy?url=...` の中継 URL に書き換える処理（「中継 URL への書き換え」）もスキップされ、`href` は元ページの値（絶対URLまたは相対パス）のまま保持される。デフォルト（ヘッダなし）では従来通りツールバー付き・リンク書き換え済みの HTML を返すため、既存のブラウザ利用には影響しない。
 
 ```
 curl -H "X-Program-Mode: true" "https://<host>/proxy?url=https://example.com"
