@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 
@@ -50,11 +51,13 @@ var blockedURLPatterns = []*network.BlockPattern{
 	{URLPattern: "*://*.taboola.com/*", Block: true},
 }
 
-// renderPage renders the page using chromedp and returns the raw HTML, CSS contents, and total network bytes transferred.
-func renderPage(ctx context.Context, targetURL string, userAgent string) (string, []string, int64, error) {
+// renderPage renders the page using chromedp and returns the raw HTML, CSS contents,
+// total network bytes transferred, and the HTTP status code of the main document response.
+func renderPage(ctx context.Context, targetURL string, userAgent string) (string, []string, int64, int, error) {
 	var totalNetworkBytes int64
 	var stylesheetIDs []cdp.StyleSheetID
 	var mu sync.Mutex
+	docStatus := make(map[cdp.LoaderID]int64)
 
 	chromedp.ListenTarget(ctx, func(ev interface{}) {
 		switch e := ev.(type) {
@@ -66,10 +69,18 @@ func renderPage(ctx context.Context, targetURL string, userAgent string) (string
 			mu.Lock()
 			stylesheetIDs = append(stylesheetIDs, e.Header.StyleSheetID)
 			mu.Unlock()
+		case *network.EventResponseReceived:
+			if e.Type == network.ResourceTypeDocument && e.Response != nil {
+				mu.Lock()
+				docStatus[e.LoaderID] = e.Response.Status
+				mu.Unlock()
+			}
 		}
 	})
 
 	var rawHTML string
+	var mainLoaderID cdp.LoaderID
+	var navErrorText string
 	err := chromedp.Run(ctx,
 		network.Enable(),
 		network.SetBlockedURLs().WithURLPatterns(blockedURLPatterns),
@@ -78,16 +89,28 @@ func renderPage(ctx context.Context, targetURL string, userAgent string) (string
 			WithAcceptLanguage("ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7").
 			WithPlatform("Windows"),
 		hideWebDriver(),
-		chromedp.Navigate(targetURL),
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			_, loaderID, errorText, _, err := page.Navigate(targetURL).Do(ctx)
+			mainLoaderID = loaderID
+			navErrorText = errorText
+			return err
+		}),
 		chromedp.WaitVisible(`body`, chromedp.ByQuery),
 		chromedp.OuterHTML(`html`, &rawHTML),
 	)
 	if err != nil {
-		return "", nil, 0, err
+		return "", nil, 0, 0, err
+	}
+	if navErrorText != "" {
+		return "", nil, 0, 0, fmt.Errorf("navigation failed: %s", navErrorText)
 	}
 
+	mu.Lock()
+	status := int(docStatus[mainLoaderID])
+	mu.Unlock()
+
 	cssTexts := fetchStylesheets(ctx, stylesheetIDs, &mu)
-	return rawHTML, cssTexts, totalNetworkBytes, nil
+	return rawHTML, cssTexts, totalNetworkBytes, status, nil
 }
 
 // hideWebDriver injects JS to conceal automation markers from bot detection.
