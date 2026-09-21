@@ -37,8 +37,9 @@ Go と Headless Chrome（サイドカー構成）を利用して、データ通�
 * ページ内の `<a href>` を `/proxy?url=...` の中継 URL に書き換える処理（「中継 URL への書き換え」）。`href` は元ページの値（絶対URLまたは相対パス）のまま保持される
 * Headless Chrome で抽出した元ページ CSS の再埋め込み（`<style data-proxy-style="original">`）およびリーダーモード用スタイルシート（`reader.css`）への `<link rel="stylesheet">`
 * ドメイン固有の表示用 CSS パッチ（モディファイア。例: `zenn.dev` 用のスクロール修正 CSS）
+* `nav`, `header`, `footer`, `aside` 要素（ナビゲーションメニューやサイトフッターのリンク集など、本文に無関係な構造要素）
 
-デフォルト（ヘッダなし）では従来通りツールバー付き・リンク書き換え済み・CSS 適用済みの HTML を返すため、既存のブラウザ利用には影響しない。
+デフォルト（ヘッダなし）では従来通りツールバー付き・リンク書き換え済み・CSS 適用済み・上記構造要素を含む HTML を返すため、既存のブラウザ利用には影響しない。
 
 ```
 curl -H "X-Program-Mode: true" "https://<host>/proxy?url=https://example.com"

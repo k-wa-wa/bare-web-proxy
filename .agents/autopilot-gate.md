@@ -45,7 +45,7 @@ for mode in default prog; do
   check $mode https://news.ycombinator.com/ "Hacker News"                         # 素の HTML・リンク書き換え
   check $mode https://ja.wikipedia.org/wiki/Go "プログラミング言語"                # 大きいページ・CSS 再適用
   check $mode https://zenn.dev/ "Zenn"                                            # ドメイン固有の修飾処理の対象
-  check $mode https://todomvc.com/examples/react/dist/ "todos"                    # JS 実行後にしか現れない SPA
+  check $mode https://todomvc.com/examples/react/dist/ "todo-list"                # JS 実行後にしか現れない SPA（<header> 除去後も残る要素）
 done
 ```
 
