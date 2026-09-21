@@ -28,7 +28,9 @@ func (h *Handler) processHTML(rawHTML string, targetURL string, cssTexts []strin
 
 	stripTags(doc)
 	injectCSS(doc, cssTexts)
-	if !programMode {
+	if programMode {
+		stripStructuralTags(doc)
+	} else {
 		rewriteLinks(doc, targetURL)
 		injectToolbar(doc, targetURL)
 	}
@@ -39,6 +41,13 @@ func (h *Handler) processHTML(rawHTML string, targetURL string, cssTexts []strin
 
 func stripTags(doc *goquery.Document) {
 	doc.Find("script, noscript, iframe, img, svg, video, style, link[rel='stylesheet']").Remove()
+}
+
+// stripStructuralTags removes non-content layout elements (navigation menus,
+// site headers/footers, sidebars) that add noise/tokens for programmatic
+// callers but carry no article content of their own.
+func stripStructuralTags(doc *goquery.Document) {
+	doc.Find("nav, header, footer, aside").Remove()
 }
 
 func injectCSS(doc *goquery.Document, cssTexts []string) {
