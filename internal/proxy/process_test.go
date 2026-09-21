@@ -10,6 +10,13 @@ const sampleHTML = `<html><head></head><body>
 <a href="/relative/path">relative</a>
 </body></html>`
 
+const decoratedHTML = `<html><head></head><body>
+<!-- top comment -->
+<div id="main" class="article" style="color: red;" data-testid="root" data-foo="bar">
+	<p class="text">hello<!-- inline comment --></p>
+</div>
+</body></html>`
+
 func TestProcessHTMLDefaultModeRewritesLinksAndInjectsToolbar(t *testing.T) {
 	h := &Handler{}
 	out, err := h.processHTML(sampleHTML, "https://example.com/", nil, false)
@@ -46,5 +53,36 @@ func TestProcessHTMLProgramModeSkipsRewriteLinksAndToolbar(t *testing.T) {
 	}
 	if !strings.Contains(out, `href="/relative/path"`) {
 		t.Errorf("expected original relative href to be preserved as-is, got: %s", out)
+	}
+}
+
+func TestProcessHTMLProgramModeStripsPresentationalAttrsAndComments(t *testing.T) {
+	h := &Handler{}
+	out, err := h.processHTML(decoratedHTML, "https://example.com/", nil, true)
+	if err != nil {
+		t.Fatalf("processHTML() error = %v", err)
+	}
+
+	for _, want := range []string{"class=", "style=", "data-testid", "data-foo", "<!--"} {
+		if strings.Contains(out, want) {
+			t.Errorf("expected %q to be stripped in program mode, got: %s", want, out)
+		}
+	}
+	if !strings.Contains(out, `id="main"`) {
+		t.Errorf("expected non-presentational attributes like id to be preserved, got: %s", out)
+	}
+}
+
+func TestProcessHTMLDefaultModeKeepsPresentationalAttrsAndComments(t *testing.T) {
+	h := &Handler{}
+	out, err := h.processHTML(decoratedHTML, "https://example.com/", nil, false)
+	if err != nil {
+		t.Fatalf("processHTML() error = %v", err)
+	}
+
+	for _, want := range []string{`class="article"`, `style="color: red;"`, `data-testid="root"`, `data-foo="bar"`, "<!-- top comment -->", "<!-- inline comment -->"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %q to be preserved in default mode, got: %s", want, out)
+		}
 	}
 }
