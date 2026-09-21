@@ -27,9 +27,18 @@ Go と Headless Chrome（サイドカー構成）を利用して、データ通�
 
 `/proxy` はブラウザからの直接アクセスに加えて、バッチ処理など機械的な呼び出し元からの利用も想定している。
 
-### プログラムモード（ツールバー除去）
+### プログラムモード（AI agent 向け軽量応答）
 
-リクエストヘッダ `X-Program-Mode: true` を付けて `/proxy` を呼び出すと、ツールバー用の `<div id="proxy-toolbar-container">` や `<script>` 埋め込みを省略した HTML を返す。加えて、ページ内の `<a href>` を `/proxy?url=...` の中継 URL に書き換える処理（「中継 URL への書き換え」）もスキップされ、`href` は元ページの値（絶対URLまたは相対パス）のまま保持される。デフォルト（ヘッダなし）では従来通りツールバー付き・リンク書き換え済みの HTML を返すため、既存のブラウザ利用には影響しない。
+`X-Program-Mode: true` は、人間がブラウザで閲覧するのではなく、**AI agent（LLM によるコンテンツ取得・要約・情報抽出等）がテキストとして本文を解釈する用途**を想定したモードである。表示用の要素を取り除き、レスポンスサイズ・トークン数を削減する。
+
+リクエストヘッダ `X-Program-Mode: true` を付けて `/proxy` を呼び出すと、以下の要素が省略された HTML を返す。
+
+* ツールバー用の `<div id="proxy-toolbar-container">` や `<script>` 埋め込み
+* ページ内の `<a href>` を `/proxy?url=...` の中継 URL に書き換える処理（「中継 URL への書き換え」）。`href` は元ページの値（絶対URLまたは相対パス）のまま保持される
+* Headless Chrome で抽出した元ページ CSS の再埋め込み（`<style data-proxy-style="original">`）およびリーダーモード用スタイルシート（`reader.css`）への `<link rel="stylesheet">`
+* ドメイン固有の表示用 CSS パッチ（モディファイア。例: `zenn.dev` 用のスクロール修正 CSS）
+
+デフォルト（ヘッダなし）では従来通りツールバー付き・リンク書き換え済み・CSS 適用済みの HTML を返すため、既存のブラウザ利用には影響しない。
 
 ```
 curl -H "X-Program-Mode: true" "https://<host>/proxy?url=https://example.com"

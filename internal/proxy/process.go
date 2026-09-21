@@ -17,9 +17,14 @@ const proxyBaseURL = "/proxy"
 var styleCloseRegex = regexp.MustCompile(`(?i)</style>`)
 
 // processHTML strips unwanted tags, injects CSS, rewrites links, and embeds the toolbar.
-// When programMode is true, link rewriting and the toolbar container/script embeds are
-// skipped so programmatic callers receive content-relevant markup with hrefs left as
-// absolute URLs instead of being rewritten to /proxy?url=... relay links.
+// programMode is intended for AI agent callers (LLM-driven content fetching, summarization,
+// information extraction, etc.) that consume the response as text rather than render it. When
+// programMode is true, link rewriting and the toolbar container/script embeds are skipped so
+// callers receive content-relevant markup with hrefs left as absolute URLs instead of being
+// rewritten to /proxy?url=... relay links. The original-page CSS re-embed, the reader.css
+// stylesheet link, and domain-specific display patches (modifiers.ModifyDocument) are also
+// skipped, since they exist purely to make the page look right in a browser and only add
+// tokens an agent has no use for.
 func (h *Handler) processHTML(rawHTML string, targetURL string, cssTexts []string, programMode bool) (string, error) {
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(rawHTML))
 	if err != nil {
@@ -27,12 +32,12 @@ func (h *Handler) processHTML(rawHTML string, targetURL string, cssTexts []strin
 	}
 
 	stripTags(doc)
-	injectCSS(doc, cssTexts)
 	if !programMode {
+		injectCSS(doc, cssTexts)
 		rewriteLinks(doc, targetURL)
 		injectToolbar(doc, targetURL)
+		modifiers.ModifyDocument(doc, targetURL)
 	}
-	modifiers.ModifyDocument(doc, targetURL)
 
 	return doc.Html()
 }
