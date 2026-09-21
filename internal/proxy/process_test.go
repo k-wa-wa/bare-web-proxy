@@ -48,3 +48,57 @@ func TestProcessHTMLProgramModeSkipsRewriteLinksAndToolbar(t *testing.T) {
 		t.Errorf("expected original relative href to be preserved as-is, got: %s", out)
 	}
 }
+
+func TestProcessHTMLDefaultModeInjectsCSS(t *testing.T) {
+	h := &Handler{}
+	out, err := h.processHTML(sampleHTML, "https://example.com/", []string{"body { color: red; }"}, false)
+	if err != nil {
+		t.Fatalf("processHTML() error = %v", err)
+	}
+
+	if !strings.Contains(out, `<style data-proxy-style="original">`) {
+		t.Errorf("expected original CSS to be re-embedded in default mode, got: %s", out)
+	}
+	if !strings.Contains(out, `<link rel="stylesheet" id="proxy-reader-style"`) {
+		t.Errorf("expected reader.css stylesheet link in default mode, got: %s", out)
+	}
+}
+
+func TestProcessHTMLProgramModeSkipsCSS(t *testing.T) {
+	h := &Handler{}
+	out, err := h.processHTML(sampleHTML, "https://example.com/", []string{"body { color: red; }"}, true)
+	if err != nil {
+		t.Fatalf("processHTML() error = %v", err)
+	}
+
+	if strings.Contains(out, "<style") {
+		t.Errorf("expected no <style> tags in program mode, got: %s", out)
+	}
+	if strings.Contains(out, `rel="stylesheet"`) {
+		t.Errorf("expected no stylesheet links in program mode, got: %s", out)
+	}
+}
+
+func TestProcessHTMLProgramModeSkipsDomainModifiers(t *testing.T) {
+	h := &Handler{}
+	out, err := h.processHTML(sampleHTML, "https://zenn.dev/", nil, true)
+	if err != nil {
+		t.Fatalf("processHTML() error = %v", err)
+	}
+
+	if strings.Contains(out, `id="proxy-domain-patch-zenn"`) {
+		t.Errorf("expected domain-specific CSS patch to be skipped in program mode, got: %s", out)
+	}
+}
+
+func TestProcessHTMLDefaultModeAppliesDomainModifiers(t *testing.T) {
+	h := &Handler{}
+	out, err := h.processHTML(sampleHTML, "https://zenn.dev/", nil, false)
+	if err != nil {
+		t.Fatalf("processHTML() error = %v", err)
+	}
+
+	if !strings.Contains(out, `id="proxy-domain-patch-zenn"`) {
+		t.Errorf("expected domain-specific CSS patch to be applied in default mode, got: %s", out)
+	}
+}

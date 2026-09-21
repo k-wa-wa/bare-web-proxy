@@ -54,9 +54,12 @@ func NewHandler(allocatorContext context.Context) *Handler {
 // HandleProxy renders a target page via headless Chrome and returns processed HTML.
 //
 // By default the response is browser-oriented HTML with a toolbar injected. Callers that
-// send the request header "X-Program-Mode: true" receive the same content-bearing HTML
-// without the toolbar/script embeds, so programmatic callers can more easily isolate the
-// article body. On failure, the response is always a JSON body of the form
+// send the request header "X-Program-Mode: true" — intended for AI agents that fetch,
+// summarize, or extract information from the content rather than render it for a human —
+// receive the same content-bearing HTML with the toolbar/script embeds, link rewriting, and
+// display-only CSS (original-page style re-embed, reader.css, domain-specific patches) all
+// omitted, so agents can isolate the article body without paying the token cost of markup
+// they have no use for. On failure, the response is always a JSON body of the form
 // {"error": "...", "reason": "..."} (see the reason* constants) with an appropriate 4xx/5xx
 // status code, so callers never mistake a failure for a successful fetch.
 func (h *Handler) HandleProxy(w http.ResponseWriter, r *http.Request) {
@@ -132,8 +135,9 @@ func parseTargetURL(r *http.Request) (string, error) {
 	return "", fmt.Errorf("'url' or 'q' parameter is required")
 }
 
-// isProgramMode reports whether the caller requested the toolbar-free, program-oriented
-// response via the "X-Program-Mode" request header.
+// isProgramMode reports whether the caller requested the lightweight, AI agent-oriented
+// response (no toolbar, no link rewriting, no display-only CSS) via the "X-Program-Mode"
+// request header.
 func isProgramMode(r *http.Request) bool {
 	v := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Program-Mode")))
 	return v == "true" || v == "1"
