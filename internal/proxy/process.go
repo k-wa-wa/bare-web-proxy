@@ -18,12 +18,17 @@ const proxyBaseURL = "/proxy"
 var styleCloseRegex = regexp.MustCompile(`(?i)</style>`)
 
 // processHTML strips unwanted tags, injects CSS, rewrites links, and embeds the toolbar.
-// When programMode is true, link rewriting and the toolbar container/script embeds are
-// skipped so programmatic callers receive content-relevant markup with hrefs left as
-// absolute URLs instead of being rewritten to /proxy?url=... relay links. Program mode
-// also strips class/style/data-* attributes and HTML comments from the remaining
-// elements, since they carry presentational/metadata weight that isn't useful to an
-// agent reading the response as text.
+// programMode is intended for AI agent callers (LLM-driven content fetching, summarization,
+// information extraction, etc.) that consume the response as text rather than render it. When
+// programMode is true, link rewriting and the toolbar container/script embeds are skipped so
+// callers receive content-relevant markup with hrefs left as absolute URLs instead of being
+// rewritten to /proxy?url=... relay links. The original-page CSS re-embed, the reader.css
+// stylesheet link, and domain-specific display patches (modifiers.ModifyDocument) are also
+// skipped, since they exist purely to make the page look right in a browser and only add
+// tokens an agent has no use for. Program mode also removes non-content layout elements
+// (nav/header/footer/aside), class/style/data-* attributes, and HTML comments, since they
+// carry presentational/structural/metadata weight that isn't useful to an agent reading the
+// response as text.
 func (h *Handler) processHTML(rawHTML string, targetURL string, cssTexts []string, programMode bool) (string, error) {
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(rawHTML))
 	if err != nil {
@@ -31,21 +36,29 @@ func (h *Handler) processHTML(rawHTML string, targetURL string, cssTexts []strin
 	}
 
 	stripTags(doc)
-	injectCSS(doc, cssTexts)
-	if !programMode {
-		rewriteLinks(doc, targetURL)
-		injectToolbar(doc, targetURL)
-	} else {
+	if programMode {
+		stripStructuralTags(doc)
 		stripPresentationalAttrs(doc)
 		removeComments(doc)
+	} else {
+		injectCSS(doc, cssTexts)
+		rewriteLinks(doc, targetURL)
+		injectToolbar(doc, targetURL)
+		modifiers.ModifyDocument(doc, targetURL)
 	}
-	modifiers.ModifyDocument(doc, targetURL)
 
 	return doc.Html()
 }
 
 func stripTags(doc *goquery.Document) {
 	doc.Find("script, noscript, iframe, img, svg, video, style, link[rel='stylesheet']").Remove()
+}
+
+// stripStructuralTags removes non-content layout elements (navigation menus,
+// site headers/footers, sidebars) that add noise/tokens for programmatic
+// callers but carry no article content of their own.
+func stripStructuralTags(doc *goquery.Document) {
+	doc.Find("nav, header, footer, aside").Remove()
 }
 
 // stripPresentationalAttrs removes class, style, and data-* attributes from every
