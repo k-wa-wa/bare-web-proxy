@@ -38,8 +38,9 @@ Go と Headless Chrome（サイドカー構成）を利用して、データ通�
 * Headless Chrome で抽出した元ページ CSS の再埋め込み（`<style data-proxy-style="original">`）およびリーダーモード用スタイルシート（`reader.css`）への `<link rel="stylesheet">`
 * ドメイン固有の表示用 CSS パッチ（モディファイア。例: `zenn.dev` 用のスクロール修正 CSS）
 * `nav`, `header`, `footer`, `aside` 要素（ナビゲーションメニューやサイトフッターのリンク集など、本文に無関係な構造要素）
+* 残存する全要素の `class`/`style`/`data-*` 属性、および HTML コメントノード（`<!-- ... -->`）。`id`/`href`/`src`/`alt` などリンク解決・アクセシビリティに必要な属性は保持される
 
-デフォルト（ヘッダなし）では従来通りツールバー付き・リンク書き換え済み・CSS 適用済み・上記構造要素を含む HTML を返すため、既存のブラウザ利用には影響しない。
+デフォルト（ヘッダなし）では従来通りツールバー付き・リンク書き換え済み・CSS 適用済み・上記構造要素/属性/コメントを含む HTML を返すため、既存のブラウザ利用には影響しない。
 
 ```
 curl -H "X-Program-Mode: true" "https://<host>/proxy?url=https://example.com"

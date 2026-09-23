@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
+	"golang.org/x/net/html"
 
 	"bare-web-proxy/internal/proxy/modifiers"
 )
@@ -24,7 +25,10 @@ var styleCloseRegex = regexp.MustCompile(`(?i)</style>`)
 // rewritten to /proxy?url=... relay links. The original-page CSS re-embed, the reader.css
 // stylesheet link, and domain-specific display patches (modifiers.ModifyDocument) are also
 // skipped, since they exist purely to make the page look right in a browser and only add
-// tokens an agent has no use for.
+// tokens an agent has no use for. Program mode also removes non-content layout elements
+// (nav/header/footer/aside), class/style/data-* attributes, and HTML comments, since they
+// carry presentational/structural/metadata weight that isn't useful to an agent reading the
+// response as text.
 func (h *Handler) processHTML(rawHTML string, targetURL string, cssTexts []string, programMode bool) (string, error) {
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(rawHTML))
 	if err != nil {
@@ -34,6 +38,8 @@ func (h *Handler) processHTML(rawHTML string, targetURL string, cssTexts []strin
 	stripTags(doc)
 	if programMode {
 		stripStructuralTags(doc)
+		stripPresentationalAttrs(doc)
+		removeComments(doc)
 	} else {
 		injectCSS(doc, cssTexts)
 		rewriteLinks(doc, targetURL)
@@ -53,6 +59,45 @@ func stripTags(doc *goquery.Document) {
 // callers but carry no article content of their own.
 func stripStructuralTags(doc *goquery.Document) {
 	doc.Find("nav, header, footer, aside").Remove()
+}
+
+// stripPresentationalAttrs removes class, style, and data-* attributes from every
+// remaining element. These carry styling/frontend metadata that isn't needed to
+// understand a page's content, but link resolution and accessibility attributes
+// (id, href, src, alt, ...) are left untouched.
+func stripPresentationalAttrs(doc *goquery.Document) {
+	doc.Find("*").Each(func(_ int, s *goquery.Selection) {
+		if len(s.Nodes) == 0 {
+			return
+		}
+		var toRemove []string
+		for _, attr := range s.Nodes[0].Attr {
+			if attr.Key == "class" || attr.Key == "style" || strings.HasPrefix(attr.Key, "data-") {
+				toRemove = append(toRemove, attr.Key)
+			}
+		}
+		for _, name := range toRemove {
+			s.RemoveAttr(name)
+		}
+	})
+}
+
+// removeComments deletes every HTML comment node from the document.
+func removeComments(doc *goquery.Document) {
+	if len(doc.Nodes) == 0 {
+		return
+	}
+	var comments []*html.Node
+	for n := range doc.Nodes[0].Descendants() {
+		if n.Type == html.CommentNode {
+			comments = append(comments, n)
+		}
+	}
+	for _, n := range comments {
+		if n.Parent != nil {
+			n.Parent.RemoveChild(n)
+		}
+	}
 }
 
 func injectCSS(doc *goquery.Document, cssTexts []string) {
