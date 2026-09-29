@@ -15,7 +15,7 @@ import (
 	"github.com/chromedp/chromedp"
 )
 
-const defaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+const defaultUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
 
 var concurrentSemaphore = make(chan struct{}, 5)
 
@@ -86,10 +86,7 @@ func (h *Handler) HandleProxy(w http.ResponseWriter, r *http.Request) {
 	ctx, timeCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer timeCancel()
 
-	userAgent := r.UserAgent()
-	if userAgent == "" {
-		userAgent = defaultUserAgent
-	}
+	userAgent := renderUserAgent(r, programMode)
 
 	rawHTML, cssTexts, totalNetworkBytes, upstreamStatus, err := renderPage(ctx, targetURL, userAgent)
 	if err != nil {
@@ -133,6 +130,22 @@ func parseTargetURL(r *http.Request) (string, error) {
 		return resolveTargetURL(q), nil
 	}
 	return "", fmt.Errorf("'url' or 'q' parameter is required")
+}
+
+// renderUserAgent returns the User-Agent that headless Chrome presents to the target site.
+//
+// Browser callers get their own User-Agent so that sites serve the layout suited to the
+// device they browse from (e.g. mobile pages for a phone). Program-mode callers always get
+// defaultUserAgent instead: they are HTTP clients such as curl or Node's fetch whose own
+// User-Agent makes sites like DuckDuckGo answer with a bot challenge instead of content.
+func renderUserAgent(r *http.Request, programMode bool) string {
+	if programMode {
+		return defaultUserAgent
+	}
+	if ua := r.UserAgent(); ua != "" {
+		return ua
+	}
+	return defaultUserAgent
 }
 
 // isProgramMode reports whether the caller requested the lightweight, AI agent-oriented

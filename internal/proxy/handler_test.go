@@ -35,6 +35,31 @@ func TestIsProgramMode(t *testing.T) {
 	}
 }
 
+func TestRenderUserAgent(t *testing.T) {
+	const iPhone = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
+	cases := []struct {
+		name        string
+		userAgent   string
+		programMode bool
+		want        string
+	}{
+		{"browser keeps its own user agent", iPhone, false, iPhone},
+		{"browser without user agent falls back to default", "", false, defaultUserAgent},
+		{"program mode ignores a non-browser user agent", "curl/8.7.1", true, defaultUserAgent},
+		{"program mode ignores even a browser user agent", iPhone, true, defaultUserAgent},
+		{"program mode without user agent uses default", "", true, defaultUserAgent},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "/proxy?url=https://example.com", nil)
+			r.Header.Set("User-Agent", tc.userAgent)
+			if got := renderUserAgent(r, tc.programMode); got != tc.want {
+				t.Errorf("renderUserAgent() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestClassifyRenderError(t *testing.T) {
 	t.Run("deadline exceeded", func(t *testing.T) {
 		reason, status, _ := classifyRenderError(context.DeadlineExceeded)
