@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/chromedp/chromedp"
 	"bare-web-proxy/internal/proxy"
+	"github.com/chromedp/chromedp"
 )
 
 func main() {
@@ -19,7 +19,7 @@ func main() {
 	if chromeURL == "" {
 		chromeURL = "ws://127.0.0.1:9222"
 	}
-	
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "3000"
@@ -31,6 +31,7 @@ func main() {
 	h := proxy.NewHandler(allocatorContext)
 
 	http.HandleFunc("/", h.HandleRoot)
+	http.HandleFunc("/healthz", h.HandleHealthz)
 	http.HandleFunc("/proxy", h.HandleProxy)
 	http.HandleFunc("/proxy/assets/", h.HandleAssets)
 

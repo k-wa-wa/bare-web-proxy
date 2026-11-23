@@ -11,7 +11,7 @@ metadata:
     keel.sh/monitorContainers: "proxy-app"
     keel.sh/matchTag: "true"
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: bare-web-proxy
@@ -20,42 +20,83 @@ spec:
       labels:
         app: bare-web-proxy
     spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          nodeTaintsPolicy: Honor
+          matchLabelKeys:
+            - pod-template-hash
+          labelSelector:
+            matchLabels:
+              app: bare-web-proxy
       containers:
-      # --- コンテナ1: Chromeブラウザ本体 ---
-      - name: headless-chrome
-        image: chromedp/headless-shell:latest
-        imagePullPolicy: IfNotPresent
-        args:
-        - --blink-settings=imagesEnabled=false
-        - --disable-gpu
-        - --disable-software-rasterizer
-        - --disable-extensions
-        ports:
-        - containerPort: 9222
-        resources:
-          requests:
-            memory: "256Mi"
-            cpu: "200m"
-          limits:
-            memory: "1Gi"
-            cpu: "1000m"
+        # --- コンテナ1: Chromeブラウザ本体 ---
+        - name: headless-chrome
+          image: chromedp/headless-shell:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - --blink-settings=imagesEnabled=false
+            - --disable-gpu
+            - --disable-software-rasterizer
+            - --disable-extensions
+          ports:
+            - containerPort: 9222
+          readinessProbe:
+            httpGet:
+              path: /json/version
+              port: 9222
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /json/version
+              port: 9222
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "200m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
 
-
-      # --- コンテナ2: あなたのGoプログラム ---
-      - name: proxy-app
-        image: ghcr.io/k-wa-wa/bare-web-proxy:latest
-        imagePullPolicy: Always
-        ports:
-        - containerPort: 3000
-        env:
-        - name: PORT
-          value: "3000"
-        - name: CHROME_URL
-          value: "ws://127.0.0.1:9222" # 隣のコンテナへローカルホスト経由で接続
-        resources:
-          requests:
-            memory: "32Mi"  # Goアプリ自体は非常に軽量
-            cpu: "50m"
-          limits:
-            memory: "128Mi"
-            cpu: "200m"
+        # --- コンテナ2: あなたのGoプログラム ---
+        - name: proxy-app
+          image: ghcr.io/k-wa-wa/bare-web-proxy:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3000
+          env:
+            - name: PORT
+              value: "3000"
+            - name: CHROME_URL
+              value: "ws://127.0.0.1:9222" # 隣のコンテナへローカルホスト経由で接続
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 3000
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "32Mi"  # Goアプリ自体は非常に軽量
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "200m"

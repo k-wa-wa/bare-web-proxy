@@ -7,17 +7,17 @@ metadata:
 spec:
   ingressClassName: cilium
   tls:
-  - hosts:
-    - bwproxy.wpcapp.net
-    secretName: bare-web-proxy-tls-secret
+    - hosts:
+        - bwproxy.wpcapp.net
+      secretName: bare-web-proxy-tls-secret
   rules:
-  - host: bwproxy.wpcapp.net
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: bare-web-proxy-service
-            port:
-              number: 80
+    - host: bwproxy.wpcapp.net
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: bare-web-proxy-service
+                port:
+                  number: 80

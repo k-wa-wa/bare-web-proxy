@@ -51,6 +51,19 @@ func NewHandler(allocatorContext context.Context) *Handler {
 	}
 }
 
+// HandleHealthz responds to Kubernetes liveness/readiness probes.
+func (h *Handler) HandleHealthz(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	if r.Method == http.MethodGet {
+		_, _ = w.Write([]byte("ok\n"))
+	}
+}
+
 // HandleProxy renders a target page via headless Chrome and returns processed HTML.
 //
 // By default the response is browser-oriented HTML with a toolbar injected. Callers that
