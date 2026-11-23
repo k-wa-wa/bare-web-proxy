@@ -111,3 +111,43 @@ func TestParseTargetURLMissingParams(t *testing.T) {
 		t.Fatal("expected error when neither url nor q is provided")
 	}
 }
+
+func TestHandleHealthz(t *testing.T) {
+	h := NewHandler(context.Background())
+
+	t.Run("GET returns 200 ok", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+		w := httptest.NewRecorder()
+		h.HandleHealthz(w, r)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+		}
+		if got := w.Body.String(); got != "ok\n" {
+			t.Errorf("body = %q, want %q", got, "ok\n")
+		}
+	})
+
+	t.Run("HEAD returns 200 with empty body", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodHead, "/healthz", nil)
+		w := httptest.NewRecorder()
+		h.HandleHealthz(w, r)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+		}
+		if w.Body.Len() != 0 {
+			t.Errorf("body len = %d, want 0", w.Body.Len())
+		}
+	})
+
+	t.Run("POST returns 405", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodPost, "/healthz", nil)
+		w := httptest.NewRecorder()
+		h.HandleHealthz(w, r)
+
+		if w.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
+		}
+	})
+}
